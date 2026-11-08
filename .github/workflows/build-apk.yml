@@ -69,8 +69,8 @@ jobs:
       - name: 链接 App 源码到 SDK
         working-directory: sdk
         run: |
-          # 将检出的源码链接到 SDK 的 package 目录
-          ln -s "$GITHUB_WORKSPACE" package/luci-app-airoha-npu
+          # 仓库根本身是 feed，包本体在 luci-app-airoha-npu/ 子目录里，链接的是这一层
+          ln -s "$GITHUB_WORKSPACE/luci-app-airoha-npu" package/luci-app-airoha-npu
           echo "=== 包目录检查 ==="
           ls -la package/luci-app-airoha-npu/
 

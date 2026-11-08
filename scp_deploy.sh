@@ -9,6 +9,8 @@ ROUTER="${1:-192.168.1.1}"
 USER="${2:-root}"
 TARGET="$USER@$ROUTER"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# 仓库根本身是 feed（scripts/feeds 只扫子目录），包本体在这层子目录里
+PKG_DIR="$SCRIPT_DIR/luci-app-airoha-npu"
 
 # SSH ControlMaster: 首次连接输入密码后，后续连接复用（10分钟超时）
 CTRL_DIR="${TMPDIR:-/tmp}/luci-deploy-$$"
@@ -46,13 +48,13 @@ echo "✅ 连接成功（后续操作无需再输入密码）"
 
 # 前端 JS
 echo "[2/5] 推送前端 JS..."
-push_file "$SCRIPT_DIR/htdocs/luci-static/resources/view/airoha_npu/status.js" \
+push_file "$PKG_DIR/htdocs/luci-static/resources/view/airoha_npu/status.js" \
     "/www/luci-static/resources/view/airoha_npu/status.js" || { echo "❌ JS 推送失败"; exit 1; }
 echo "  ✅ status.js"
 
 # 后端 rpcd（tr 去除 CRLF 确保 shell 脚本不被损坏）
 echo "[3/5] 推送后端 rpcd..."
-push_file "$SCRIPT_DIR/root/usr/libexec/rpcd/luci.airoha_npu" \
+push_file "$PKG_DIR/root/usr/libexec/rpcd/luci.airoha_npu" \
     "/usr/libexec/rpcd/luci.airoha_npu" || { echo "❌ rpcd 推送失败"; exit 1; }
 ssh $SSH_OPTS "$TARGET" "chmod +x /usr/libexec/rpcd/luci.airoha_npu"
 echo "  ✅ luci.airoha_npu"
@@ -60,9 +62,9 @@ echo "  ✅ luci.airoha_npu"
 # 菜单和权限（首次安装时需要，确保目录存在）
 echo "[4/5] 推送菜单和权限配置..."
 ssh $SSH_OPTS "$TARGET" "mkdir -p /usr/share/luci/menu.d /usr/share/rpcd/acl.d"
-push_file "$SCRIPT_DIR/root/usr/share/luci/menu.d/luci-app-airoha-npu.json" \
+push_file "$PKG_DIR/root/usr/share/luci/menu.d/luci-app-airoha-npu.json" \
     "/usr/share/luci/menu.d/luci-app-airoha-npu.json" && echo "  ✅ menu.d" || echo "  ⚠ menu.d 推送失败"
-push_file "$SCRIPT_DIR/root/usr/share/rpcd/acl.d/luci-app-airoha-npu.json" \
+push_file "$PKG_DIR/root/usr/share/rpcd/acl.d/luci-app-airoha-npu.json" \
     "/usr/share/rpcd/acl.d/luci-app-airoha-npu.json" && echo "  ✅ acl.d" || echo "  ⚠ acl.d 推送失败"
 
 # 重启 rpcd（让新后端和 ACL 生效）

@@ -69,10 +69,31 @@ Airoha AN7581 SoC 实时监测与管理面板，适用于 OpenWrt。涵盖 NPU �
 
 ## 安装方法
 
-### 集成到 OpenWrt 编译
+> 仓库根目录是一个 **feed**（包本体在 `luci-app-airoha-npu/` 子目录里）。
+> 这样组织是因为 `scripts/feeds` 的扫描是 `find -mindepth 1 ... -name Makefile`，
+> 仓库根上的那份 Makefile 会被跳过，直接当 feed 用会"声明成功但一个包都装不上"。
+
+### 作为 feed 集成到 OpenWrt 编译（推荐）
 ```sh
-# 添加到编译树
-git clone https://github.com/luanmuc/luci-app-airoha-npu.git package/luci-app-airoha-npu
+# 1. 声明 feed
+echo 'src-git airoha_npu https://github.com/DenzelVincent/luci-app-airoha-npu.git' >>feeds.conf.default
+
+# 2. 更新并安装 feeds
+./scripts/feeds update airoha_npu
+./scripts/feeds install -a
+
+# 3. 在 menuconfig 中启用（LuCI -> Applications -> luci-app-airoha-npu）
+make menuconfig
+
+# 4. 编译；feed 来的包产物落在 bin/packages/<arch>/airoha_npu/
+make package/luci-app-airoha-npu/compile V=s
+```
+
+### 直接拷进编译树
+```sh
+# 添加到编译树（注意取的是仓库里的同名子目录，不是仓库根）
+git clone https://github.com/DenzelVincent/luci-app-airoha-npu.git /tmp/airoha-npu
+ln -s /tmp/airoha-npu/luci-app-airoha-npu package/luci-app-airoha-npu
 
 # 在 menuconfig 中启用
 make menuconfig
@@ -89,8 +110,9 @@ wget https://downloads.immortalwrt.org/snapshots/targets/airoha/an7581/immortalw
 tar --use-compress-program=unzstd -xf immortalwrt-sdk-*.tar.zst
 cd immortalwrt-sdk-*
 
-# 2. 克隆本仓库到 SDK 的 package 目录
-git clone https://github.com/luanmuc/luci-app-airoha-npu.git package/luci-app-airoha-npu
+# 2. 把包本体放进 SDK 的 package 目录（仓库根是 feed，取的是同名子目录）
+git clone --depth 1 https://github.com/DenzelVincent/luci-app-airoha-npu.git /tmp/airoha-npu
+cp -R /tmp/airoha-npu/luci-app-airoha-npu package/
 
 # 3. 更新 feeds
 ./scripts/feeds update -a
@@ -107,10 +129,10 @@ ls bin/packages/aarch64_generic/base/luci-app-airoha-npu_*.apk
 ### 手动安装（开发调试）
 ```sh
 # 将文件复制到路由器
-scp root/usr/libexec/rpcd/luci.airoha_npu root@router:/usr/libexec/rpcd/
-scp root/usr/share/luci/menu.d/luci-app-airoha-npu.json root@router:/usr/share/luci/menu.d/
-scp root/usr/share/rpcd/acl.d/luci-app-airoha-npu.json root@router:/usr/share/rpcd/acl.d/
-scp htdocs/luci-static/resources/view/airoha_npu/status.js root@router:/www/luci-static/resources/view/airoha_npu/
+scp luci-app-airoha-npu/root/usr/libexec/rpcd/luci.airoha_npu root@router:/usr/libexec/rpcd/
+scp luci-app-airoha-npu/root/usr/share/luci/menu.d/luci-app-airoha-npu.json root@router:/usr/share/luci/menu.d/
+scp luci-app-airoha-npu/root/usr/share/rpcd/acl.d/luci-app-airoha-npu.json root@router:/usr/share/rpcd/acl.d/
+scp luci-app-airoha-npu/htdocs/luci-static/resources/view/airoha_npu/status.js root@router:/www/luci-static/resources/view/airoha_npu/
 
 # 设置权限并重启 rpcd
 ssh root@router 'chmod +x /usr/libexec/rpcd/luci.airoha_npu && /etc/init.d/rpcd restart'
@@ -143,20 +165,24 @@ ssh root@router 'chmod +x /usr/libexec/rpcd/luci.airoha_npu && /etc/init.d/rpcd 
 ## 项目结构
 
 ```
-luci-app-airoha-npu/
-├── Makefile                                          # OpenWrt 软件包构建
-├── htdocs/
-│   └── luci-static/resources/view/airoha_npu/
-│       └── status.js                                 # LuCI JavaScript 视图
-├── root/
-│   └── usr/
-│       ├── libexec/rpcd/
-│       │   └── luci.airoha_npu                       # RPC 后端（Shell 脚本）
-│       └── share/
-│           ├── luci/menu.d/
-│           │   └── luci-app-airoha-npu.json          # 菜单配置
-│           └── rpcd/acl.d/
-│               └── luci-app-airoha-npu.json          # ACL 权限
+luci-app-airoha-npu/                                  # 仓库根 = feed 源
+├── luci-app-airoha-npu/                              # 包本体，scripts/feeds 扫这一层
+│   ├── Makefile                                      # OpenWrt 软件包构建
+│   ├── htdocs/
+│   │   └── luci-static/resources/view/airoha_npu/
+│   │       └── status.js                             # LuCI JavaScript 视图
+│   ├── po/                                           # 界面翻译（zh_Hans / es / templates）
+│   └── root/
+│       └── usr/
+│           ├── libexec/rpcd/
+│           │   └── luci.airoha_npu                   # RPC 后端（Shell 脚本）
+│           └── share/
+│               ├── luci/menu.d/
+│               │   └── luci-app-airoha-npu.json      # 菜单配置
+│               └── rpcd/acl.d/
+│                   └── luci-app-airoha-npu.json      # ACL 权限
+├── .github/workflows/build-apk.yml                   # SDK 独立编译 APK 的工作流
+├── scp_deploy.sh                                     # 免编译一键推送源文件的调试脚本
 └── screenshots/                                      # 界面截图
 ```
 
