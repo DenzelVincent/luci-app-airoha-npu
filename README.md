@@ -251,4 +251,5 @@ Apache-2.0
 
 ## 作者
 
-Ryan Chen — 为 W1700K 路由器（Airoha AN7581 + MT7996 BE19000）创建
+Ryan Chen — 原项目作者，为 W1700K 路由器（Airoha AN7581 + MT7996 BE19000）创建
+本分支针对 Nokia XG-040G-MD（Airoha AN7581）适配优化
