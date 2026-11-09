@@ -197,6 +197,8 @@ function calcTotalMem(regions) {
 
 
 /* ── Frame Engine Diagram (NPU, PPE, and Ethernet offload) ── */
+// 跨轮询保存上一次帧引擎计数，供 CDM 计算实时区间卸载率（每 5 秒轮询一次）。
+var _prevFe = null;
 function renderFeDiagram(fe, st) {
 	st = st || {};
 	if (!fe || fe.error) return E('div', { 'class': 'soc-muted' }, _('devmem not available on this build'));
@@ -223,8 +225,8 @@ function renderFeDiagram(fe, st) {
 				])
 			]),
 			pq ? E('div', { 'style': 'display:flex;align-items:center;min-height:20px;font-size:12px' }, [
-				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('入队: ') + pq.iq)]),
-				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('出队: ') + pq.oq)]),
+				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('入队占用: ') + pq.iq)]),
+				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('出队占用: ') + pq.oq)]),
 				E('span', { 'style': 'flex:1' }, pq.drops > 0 ? [E('span', { 'style': 'color:#f44336' }, _('丢包: ') + fmtK(pq.drops))] : [])
 			]) : null
 		]);
@@ -233,19 +235,38 @@ function renderFeDiagram(fe, st) {
 	// Helper: CDM offload bar with PSE queue info
 	function cdmCard(key, name, label, psePort) {
 		var d = fe[key] || {};
-		var total = (d.rx_cpu||0) + (d.rx_hwf||0);
-		var pct = total > 0 ? ((d.rx_hwf/total)*100).toFixed(1) : '0.0';
-		var barCol = total===0 ? 'var(--soc-border)' : parseFloat(pct)>80 ? '#4caf50' : parseFloat(pct)>50 ? '#ff9800' : '#f44336';
+		// 卸载率取两次轮询的计数增量（实时区间率），而非开机累计比例。
+		// _prevFe 为空=首轮无基准；计数回退=驱动重载/回绕：两者都显示“采样中”。
+		var prev = (_prevFe && _prevFe[key]) ? _prevFe[key] : null;
+		var pctVal = 0, pctText = _('采样中'), barCol = 'var(--soc-border)';
+		if (prev) {
+			var dcpu = (d.rx_cpu||0) - (prev.rx_cpu||0);
+			var dhwf = (d.rx_hwf||0) - (prev.rx_hwf||0);
+			if (dcpu >= 0 && dhwf >= 0) {
+				var dtot = dcpu + dhwf;
+				if (dtot === 0) {
+					pctText = _('空闲');
+				} else {
+					pctVal = dhwf / dtot * 100;
+					pctText = pctVal.toFixed(1) + '%';
+					// 低/零卸载率用灰色而非红色：CDM1 是纯 CPU 通道，0% 属正常分工，不是告警。
+					barCol = pctVal > 80 ? '#4caf50' : pctVal > 50 ? '#ff9800' : '#9e9e9e';
+				}
+			}
+		}
 		var pq = psePort != null ? ports.find(function(p){ return p.port === psePort; }) : null;
+		var drop = (d.rx_cpu_drop||0) + (d.rx_hwf_drop||0);
+		// 累计丢包再大也属历史；只有本区间仍在增长才标红，避免把历史丢包误报成当前故障。
+		var dropActive = prev && drop > ((prev.rx_cpu_drop||0) + (prev.rx_hwf_drop||0));
 		return E('div', { 'class': 'soc-fe-cdm soc-fe-card', 'style': 'border-left:3px solid #607d8b' }, [
 			E('div', { 'style': 'display:flex;justify-content:space-between;margin-bottom:6px' }, [
 				E('span', { 'style': 'font-weight:bold;color:#607d8b;font-size:13px' }, name),
 				E('span', { 'class': 'soc-label' }, label+' (P'+psePort+')')
 			]),
 			E('div', { 'style': 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px' }, [
-				E('span', { 'class': 'soc-text', 'style': 'font-size:12px' }, _('硬件卸载: ') + pct + '%'),
+				E('span', { 'class': 'soc-text', 'style': 'font-size:12px' }, _('实时卸载: ') + pctText),
 				E('div', { 'class': 'soc-bar-track', 'style': 'height:6px;flex:1;margin-left:10px' }, [
-					E('div', { 'style': 'background:'+barCol+';height:100%;width:'+pct+'%;transition:width .5s;border-radius:4px' })
+					E('div', { 'style': 'background:'+barCol+';height:100%;width:'+pctVal+'%;transition:width .5s;border-radius:4px' })
 				])
 			]),
 			E('div', { 'style': 'display:flex;align-items:center;min-height:20px;font-size:12px' }, [
@@ -253,11 +274,15 @@ function renderFeDiagram(fe, st) {
 				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('硬件转发: ') + fmtK(d.rx_hwf||0))]),
 				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('发送: ') + fmtK(d.tx||0))])
 			]),
-			pq ? E('div', { 'style': 'display:flex;align-items:center;min-height:20px;font-size:12px' }, [
-				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('入队: ') + pq.iq)]),
-				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('出队: ') + pq.oq)]),
-				E('span', { 'style': 'flex:1' }, pq.drops > 0 ? [E('span', { 'style': 'color:#f44336' }, _('丢包: ') + fmtK(pq.drops))] : [])
-			]) : null
+			// 队列占用为 PSE 瞬时状态（128B 页），非累计包数；丢包取 CDM 自身 RXCPU/RXHWF 丢包计数。
+			E('div', { 'style': 'display:flex;align-items:center;min-height:20px;font-size:12px' }, [
+				E('span', { 'style': 'flex:1' }, pq ? [E('span', { 'class': 'soc-muted' }, _('入队占用: ') + pq.iq)] : []),
+				E('span', { 'style': 'flex:1' }, pq ? [E('span', { 'class': 'soc-muted' }, _('出队占用: ') + pq.oq)] : []),
+				E('span', { 'style': 'flex:1' }, [
+					E('span', { 'class': 'soc-muted' }, _('丢包: ')),
+					E('span', { 'style': 'color:' + (dropActive ? '#f44336' : 'inherit') }, fmtK(drop))
+				])
+			])
 		]);
 	}
 
@@ -286,7 +311,7 @@ function renderFeDiagram(fe, st) {
 		])
 	]);
 
-	return E('div', { 'id': 'fe-diagram' }, [
+	var diagram = E('div', { 'id': 'fe-diagram' }, [
 		// PSE buffer bar
 		E('div', { 'class': 'soc-fe-pse', 'style': 'margin:0 8px 10px' }, [
 			E('div', { 'style': 'display:flex;justify-content:space-between;margin-bottom:4px' }, [
@@ -313,6 +338,9 @@ function renderFeDiagram(fe, st) {
 			])
 		])
 	]);
+	// 必须在卡片构建之后更新基准，下次轮询才能与本次快照做差。
+	_prevFe = fe;
+	return diagram;
 }
 
 /* ── CPU Frequency ── */
@@ -432,6 +460,7 @@ return view.extend({
 		return Promise.all([ callNpuStatus(), callPpeEntries(), callFrameEngine() ]);
 	},
 	render: function(data) {
+		_prevFe = null; // 进入页面重置基准，首帧显示“采样中”，避免沿用上次访问的陈旧计数
 		injectCSS();
 		var st = data[0]||{}, ppe = data[1]||{}, fe = data[2]||{};
 		var entries = Array.isArray(ppe.entries) ? ppe.entries : [];
