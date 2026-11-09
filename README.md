@@ -6,7 +6,7 @@ Airoha AN7581 SoC 实时监测与管理面板，适用于 OpenWrt。涵盖 NPU �
 
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 ![OpenWrt](https://img.shields.io/badge/OpenWrt-24.10%2B-brightgreen.svg)
-![Version](https://img.shields.io/badge/version-1.3.0-orange.svg)
+![Version](https://img.shields.io/badge/version-1.2.2-orange.svg)
 
 ## 界面截图
 
@@ -200,7 +200,7 @@ luci-app-airoha-npu/                                  # 仓库根 = feed 源
 
 ## 版本历史
 
-### v1.3.0
+### v1.2.2
 - UI 样式全面优化：三列等宽布局，统一 32px 行高，12px 字体
 - 颜色分类：绿色 (PON/WAN)、橙色 (LAN)、灰色 (CDM)、蓝色 (PPE)
 - PPE Config 折叠区域自定义样式，箭头旋转动画
