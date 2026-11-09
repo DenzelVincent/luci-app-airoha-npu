@@ -74,5 +74,5 @@ sleep 1
 echo "  ✅ rpcd 已重启"
 
 echo ""
-echo "✅ 部署完成！浏览器打开 http://$ROUTER/cgi-bin/luci/admin/status/airoha_npu"
+echo "✅ 部署完成！浏览器打开 http://$ROUTER/cgi-bin/luci/admin/status/npu"
 echo "   提示: Ctrl+Shift+R 硬刷新以加载最新 JS"

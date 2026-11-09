@@ -149,7 +149,7 @@ ssh root@router 'chmod +x /usr/libexec/rpcd/luci.airoha_npu && /etc/init.d/rpcd 
 #   $2 - SSH 用户名（默认 root）
 
 # 部署完成后浏览器打开：
-# http://192.168.1.1/cgi-bin/luci/admin/status/airoha_npu
+# http://192.168.1.1/cgi-bin/luci/admin/status/npu
 # 提示：Ctrl+Shift+R 硬刷新以加载最新 JS
 ```
 
