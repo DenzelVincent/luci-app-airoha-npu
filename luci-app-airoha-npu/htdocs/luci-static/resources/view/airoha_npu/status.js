@@ -52,7 +52,7 @@ var themeCSS = '\
 #ppe-config-table td:last-child,#ppe-config-table th:last-child{text-align:left}\
 #ppe-config-table td:last-child{font-family:monospace;font-size:12px}\
 /* FE card统一边框和最小高度 */\
-.soc-fe-card{min-height:100px;display:flex;flex-direction:column;flex:1}\
+.soc-fe-card{height:104px;display:flex;flex-direction:column}\
 .soc-fe-gdm,.soc-fe-cdm,.soc-fe-ppe,.soc-fe-pse{border:1px solid var(--soc-border);border-radius:8px;padding:10px 12px;margin-bottom:10px;background:var(--soc-card-bg)}\
 .soc-fe-ppe{border-left:3px solid #2196f3}\
 /* PPE config details arrow rotation */\
@@ -170,7 +170,7 @@ var psePortMap = [
 	{ name: 'GDM1', label: 'LAN2/3/4 1G',   color: '#ff9800' },
 	{ name: 'GDM2', label: 'PON & WAN',      color: '#4caf50' },
 	{ name: 'CDM1', label: 'CPU DMA 1',   color: '#607d8b' },
-	{ name: 'GDM3', label: 'GDM3',        color: '#607d8b' },
+	{ name: 'GDM3', label: 'WiFi',        color: '#9c27b0' },
 	{ name: 'CDM2', label: 'CPU DMA 2',   color: '#607d8b' },
 	{ name: 'PPE0', label: 'PPE Eng 0',   color: '#2196f3' },
 	{ name: 'PPE1', label: 'PPE Eng 1',   color: '#2196f3' },
@@ -207,10 +207,8 @@ function renderFeDiagram(fe, st) {
 	// Helper: GDM card with PSE queue info
 	function gdmCard(key, name, label, color, psePort) {
 		var d = fe[key] || {};
-		var active = d.tx > 0 || d.rx > 0;
 		var pq = psePort != null ? ports.find(function(p){ return p.port === psePort; }) : null;
-		var drop = (pq && pq.drops > 0) || d.tx_drop > 0 || d.rx_drop > 0;
-		return E('div', { 'class': 'soc-fe-gdm soc-fe-card', 'style': 'border-left:3px solid '+color + (drop?';border-color:#f44336':'') }, [
+		return E('div', { 'class': 'soc-fe-gdm soc-fe-card', 'style': 'border-left:3px solid '+color }, [
 			E('div', { 'style': 'display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px' }, [
 				E('span', { 'style': 'font-weight:bold;color:'+color+';font-size:14px' }, name),
 				E('span', { 'class': 'soc-label' }, 'P'+psePort)
@@ -220,58 +218,35 @@ function renderFeDiagram(fe, st) {
 				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('发送: ')), E('span', { 'class': 'soc-text' }, fmtK(d.tx))]),
 				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('接收: ')), E('span', { 'class': 'soc-text' }, fmtK(d.rx))]),
 				E('span', { 'style': 'flex:1' }, [
-					E('span', { 'class': 'soc-muted' }, _('丢包: ')),
+					E('span', { 'class': 'soc-muted' }, _('DMA丢包: ')),
 					E('span', { 'style': 'color:' + ((d.tx_drop || 0) + (d.rx_drop || 0) > 0 ? '#f44336' : 'inherit') }, fmtK((d.tx_drop || 0) + (d.rx_drop || 0)))
 				])
 			]),
 			pq ? E('div', { 'style': 'display:flex;align-items:center;min-height:20px;font-size:12px' }, [
 				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('入队占用: ') + pq.iq)]),
 				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('出队占用: ') + pq.oq)]),
-				E('span', { 'style': 'flex:1' }, pq.drops > 0 ? [E('span', { 'style': 'color:#f44336' }, _('丢包: ') + fmtK(pq.drops))] : [])
+				E('span', { 'style': 'flex:1' }, pq.drops > 0 ? [E('span', { 'style': 'color:#f44336' }, _('队列丢包: ') + fmtK(pq.drops))] : [])
 			]) : null
 		]);
 	}
 
-	// Helper: CDM offload bar with PSE queue info
+	// Helper: CDM card with PSE queue info（卸载率已移至顶部并列展示）
 	function cdmCard(key, name, label, psePort) {
 		var d = fe[key] || {};
-		// 卸载率取两次轮询的计数增量（实时区间率），而非开机累计比例。
-		// _prevFe 为空=首轮无基准；计数回退=驱动重载/回绕：两者都显示“采样中”。
 		var prev = (_prevFe && _prevFe[key]) ? _prevFe[key] : null;
-		var pctVal = 0, pctText = _('采样中'), barCol = 'var(--soc-border)';
-		if (prev) {
-			var dcpu = (d.rx_cpu||0) - (prev.rx_cpu||0);
-			var dhwf = (d.rx_hwf||0) - (prev.rx_hwf||0);
-			if (dcpu >= 0 && dhwf >= 0) {
-				var dtot = dcpu + dhwf;
-				if (dtot === 0) {
-					pctText = _('空闲');
-				} else {
-					pctVal = dhwf / dtot * 100;
-					pctText = pctVal.toFixed(1) + '%';
-					// 低/零卸载率用灰色而非红色：CDM1 是纯 CPU 通道，0% 属正常分工，不是告警。
-					barCol = pctVal > 80 ? '#4caf50' : pctVal > 50 ? '#ff9800' : '#9e9e9e';
-				}
-			}
-		}
 		var pq = psePort != null ? ports.find(function(p){ return p.port === psePort; }) : null;
 		var drop = (d.rx_cpu_drop||0) + (d.rx_hwf_drop||0);
 		// 累计丢包再大也属历史；只有本区间仍在增长才标红，避免把历史丢包误报成当前故障。
 		var dropActive = prev && drop > ((prev.rx_cpu_drop||0) + (prev.rx_hwf_drop||0));
 		return E('div', { 'class': 'soc-fe-cdm soc-fe-card', 'style': 'border-left:3px solid #607d8b' }, [
-			E('div', { 'style': 'display:flex;justify-content:space-between;margin-bottom:6px' }, [
-				E('span', { 'style': 'font-weight:bold;color:#607d8b;font-size:13px' }, name),
-				E('span', { 'class': 'soc-label' }, label+' (P'+psePort+')')
+			E('div', { 'style': 'display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px' }, [
+				E('span', { 'style': 'font-weight:bold;color:#607d8b;font-size:14px' }, name),
+				E('span', { 'class': 'soc-label' }, 'P'+psePort)
 			]),
-			E('div', { 'style': 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px' }, [
-				E('span', { 'class': 'soc-text', 'style': 'font-size:12px' }, _('实时卸载: ') + pctText),
-				E('div', { 'class': 'soc-bar-track', 'style': 'height:6px;flex:1;margin-left:10px' }, [
-					E('div', { 'style': 'background:'+barCol+';height:100%;width:'+pctVal+'%;transition:width .5s;border-radius:4px' })
-				])
-			]),
-			E('div', { 'style': 'display:flex;align-items:center;min-height:20px;font-size:12px' }, [
-				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('CPU: ') + fmtK(d.rx_cpu||0))]),
-				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('硬件转发: ') + fmtK(d.rx_hwf||0))]),
+			E('div', { 'class': 'soc-label', 'style': 'margin-bottom:6px' }, label),
+			E('div', { 'style': 'display:flex;align-items:center;min-height:20px;font-size:12px;margin-bottom:4px' }, [
+				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('CPU转发: ') + fmtK(d.rx_cpu||0))]),
+				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('硬件转发: ') + (key === 'cdm1' ? _('无') : fmtK(d.rx_hwf||0)))]),
 				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('发送: ') + fmtK(d.tx||0))])
 			]),
 			// 队列占用为 PSE 瞬时状态（128B 页），非累计包数；丢包取 CDM 自身 RXCPU/RXHWF 丢包计数。
@@ -291,6 +266,26 @@ function renderFeDiagram(fe, st) {
 	var pseT = (fe.pse_used||0)+(fe.pse_free||0);
 	var pseP = pseT>0 ? ((fe.pse_used/pseT)*100).toFixed(1) : '0';
 	var pseCol = parseFloat(pseP)>80?'#f44336':parseFloat(pseP)>50?'#ff9800':'#4caf50';
+
+	// 硬件实时卸载率提升到顶部与 PSE 缓冲区并列：取 CDM2 两次轮询的计数增量（实时区间率），非开机累计。
+	// _prevFe 为空=首轮无基准；计数回退=驱动重载/回绕：两者都显示“采样中”。
+	var c2 = fe.cdm2 || {};
+	var c2prev = (_prevFe && _prevFe.cdm2) ? _prevFe.cdm2 : null;
+	var offPct = 0, offText = _('采样中'), offCol = 'var(--soc-border)';
+	if (c2prev) {
+		var odcpu = (c2.rx_cpu||0) - (c2prev.rx_cpu||0);
+		var odhwf = (c2.rx_hwf||0) - (c2prev.rx_hwf||0);
+		if (odcpu >= 0 && odhwf >= 0) {
+			var odtot = odcpu + odhwf;
+			if (odtot === 0) {
+				offText = _('空闲');
+			} else {
+				offPct = odhwf / odtot * 100;
+				offText = offPct.toFixed(1) + '%';
+				offCol = offPct > 80 ? '#4caf50' : offPct > 50 ? '#ff9800' : '#9e9e9e';
+			}
+		}
+	}
 
 	// PPE engines card
 	var ppeCard = E('div', { 'class': 'soc-fe-ppe soc-fe-card' }, [
@@ -312,28 +307,38 @@ function renderFeDiagram(fe, st) {
 	]);
 
 	var diagram = E('div', { 'id': 'fe-diagram' }, [
-		// PSE buffer bar
-		E('div', { 'class': 'soc-fe-pse', 'style': 'margin:0 8px 10px' }, [
-			E('div', { 'style': 'display:flex;justify-content:space-between;margin-bottom:4px' }, [
-				E('span', { 'class': 'soc-text', 'style': 'font-weight:bold;font-size:13px' }, _('PSE 共享缓冲区')),
-				E('span', { 'class': 'soc-muted', 'style': 'font-size:12px' }, (fe.pse_used||0) + _(' 已用 / ') + (fe.pse_free||0) + _(' 空闲 (') + pseP + '%)')
+		// 顶部并列：PSE 共享缓冲区 | 硬件实时卸载（CDM2）；窄屏 flex-wrap 自动换行堆叠。
+		E('div', { 'style': 'display:flex;gap:12px;flex-wrap:wrap;margin:0 8px 10px' }, [
+			E('div', { 'class': 'soc-fe-pse', 'style': 'flex:1 1 260px;min-width:0' }, [
+				E('div', { 'style': 'display:flex;justify-content:space-between;margin-bottom:4px' }, [
+					E('span', { 'class': 'soc-text', 'style': 'font-weight:bold;font-size:13px' }, _('PSE 共享缓冲区')),
+					E('span', { 'class': 'soc-muted', 'style': 'font-size:12px' }, (fe.pse_used||0) + _(' 已用 / ') + (fe.pse_free||0) + _(' 空闲 (') + pseP + '%)')
+				]),
+				E('div', { 'class': 'soc-bar-track', 'style': 'height:8px' }, [
+					E('div', { 'style': 'background:'+pseCol+';height:100%;width:'+pseP+'%;border-radius:4px;transition:width .5s' })
+				])
 			]),
-			E('div', { 'class': 'soc-bar-track', 'style': 'height:8px' }, [
-				E('div', { 'style': 'background:'+pseCol+';height:100%;width:'+pseP+'%;border-radius:4px;transition:width .5s' })
+			E('div', { 'class': 'soc-fe-pse', 'style': 'flex:1 1 260px;min-width:0' }, [
+				E('div', { 'style': 'display:flex;justify-content:space-between;margin-bottom:4px' }, [
+					E('span', { 'class': 'soc-text', 'style': 'font-weight:bold;font-size:13px' }, _('硬件实时卸载') + ' (CDM2)'),
+					E('span', { 'class': 'soc-muted', 'style': 'font-size:12px' }, offText)
+				]),
+				E('div', { 'class': 'soc-bar-track', 'style': 'height:8px' }, [
+					E('div', { 'style': 'background:'+offCol+';height:100%;width:'+offPct+'%;border-radius:4px;transition:width .5s' })
+				])
 			])
 		]),
-		// Two-column: GDM (left) | CDM + PPE (right)
+		// 双栏: 左 GDM 端口 | 右 CDM + PPE
 		E('div', { 'class': 'soc-fe-layout' }, [
-			// Left: GDM ports
 			E('div', { 'class': 'soc-fe-left' }, [
 				gdmCard('gdm2', 'PON & WAN', 'GDM2 (USXGMII 10G)', '#4caf50', 1),
 				gdmCard('gdm4', 'LAN1', 'GDM4 (EN8811H 2.5G)', '#ff9800', 9),
-				gdmCard('gdm1', 'LAN2/3/4', 'GDM1 (内部交换 1G)', '#ff9800', 0)
+				gdmCard('gdm1', 'LAN2/3/4', 'GDM1 (内部交换 1G)', '#ff9800', 0),
+				st.wifi_present ? gdmCard('gdm3', 'WiFi', 'GDM3 (WiFi DMA)', '#9c27b0', 3) : null
 			]),
-			// Right: CDM + PPE
 			E('div', { 'class': 'soc-fe-right' }, [
-				cdmCard('cdm1', 'CDM1', 'CPU DMA 1', 2),
-				cdmCard('cdm2', 'CDM2', 'CPU DMA 2', 4),
+				cdmCard('cdm1', 'CDM1', 'CPU DMA 1 (控制报文: ARP/DHCP/ICMP)', 2),
+				cdmCard('cdm2', 'CDM2', 'CPU DMA 2 (卸载数据流: PPE 转发)', 4),
 				ppeCard
 			])
 		])
@@ -503,23 +508,6 @@ return view.extend({
 						E('td',{'class':'td'}, '8x RISC-V 通过 PCIe 连接 RAM — PPE 初始化、流/PON 卸载、数据包处理') ])
 				])
 			]),
-			// PPE Config (separate collapsible section)
-			st.ppe_config ? E('div',{'class':'cbi-section soc-section'},[
-				E('details',{'id':'ppe-config-details','style':'border:1px solid var(--soc-border);border-radius:8px;padding:10px 12px;background:var(--soc-card-bg)'},[
-					E('summary',{'style':'cursor:pointer;font-size:15px;font-weight:600;color:var(--soc-text);list-style:none;display:flex;align-items:center'}, [
-						E('span',{'id':'ppe-config-arrow','style':'margin-right:8px;font-size:12px;transition:transform .2s'},'▶'),
-						_('PPE 配置寄存器')
-					]),
-					E('div',{'style':'font-size:13px;color:var(--soc-muted);margin:8px 0 10px 20px'},_('PPE 硬件转发引擎的底层寄存器配置，用于调试和诊断。')),
-					E('div',{'class':'soc-table-wrap'},[
-						E('table',{'class':'table','id':'ppe-config-table'},[
-							E('tr',{'class':'tr cbi-section-table-titles'},[
-								E('th',{'class':'th'},_('寄存器')), E('th',{'class':'th'},_('值'))
-							])
-						].concat(renderPpeConfigRows(st.ppe_config)))
-					])
-				])
-			]) : null,
 			// Hardware Offload Engine
 			E('div',{'class':'cbi-section soc-section'},[
 				E('h3',{},_('硬件卸载引擎')),
@@ -536,7 +524,24 @@ return view.extend({
 						])
 					].concat(renderPpeRows(entries)))
 				])
-			])
+			]),
+			// PPE Config (collapsible, below flow table)
+			st.ppe_config ? E('div',{'class':'cbi-section soc-section'},[
+				E('details',{'id':'ppe-config-details','style':'border:1px solid var(--soc-border);border-radius:8px;padding:10px 12px;background:var(--soc-card-bg)'},[
+					E('summary',{'style':'cursor:pointer;font-size:15px;font-weight:600;color:var(--soc-text);list-style:none;display:flex;align-items:center'}, [
+						E('span',{'id':'ppe-config-arrow','style':'margin-right:8px;font-size:12px;transition:transform .2s'},'▶'),
+						_('PPE 配置寄存器')
+					]),
+					E('div',{'style':'font-size:13px;color:var(--soc-muted);margin:8px 0 10px 20px'},_('PPE 硬件转发引擎的底层寄存器配置，用于调试和诊断。')),
+					E('div',{'class':'soc-table-wrap'},[
+						E('table',{'class':'table','id':'ppe-config-table'},[
+							E('tr',{'class':'tr cbi-section-table-titles'},[
+								E('th',{'class':'th'},_('寄存器')), E('th',{'class':'th'},_('值'))
+							])
+						].concat(renderPpeConfigRows(st.ppe_config)))
+					])
+				])
+			]) : null
 		]);
 
 		poll.add(L.bind(function() {

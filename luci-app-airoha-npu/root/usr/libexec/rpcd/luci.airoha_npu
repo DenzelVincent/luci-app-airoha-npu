@@ -207,6 +207,12 @@ get_status() {
 		cpu_count=$(ls -d /sys/devices/system/cpu/cpu[0-9]* 2>/dev/null | wc -l)
 	fi
 
+	# WiFi 能力检测：有 ieee80211 PHY 注册则展示 GDM3 卡片
+	local wifi_present="false"
+	if ls -d /sys/class/ieee80211/phy* >/dev/null 2>&1; then
+		wifi_present="true"
+	fi
+
 	local npu_ver_esc=$(json_escape "${npu_ver:-Unknown}")
 	local npu_dev_esc=$(json_escape "${npu_device:-}")
 	local gov_esc=$(json_escape "${cpu_governor:-unknown}")
@@ -217,10 +223,10 @@ get_status() {
 	local fw_ver_esc=$(json_escape "${npu_fw_ver:-}")
 	local mrn_esc=$(json_escape "${mem_region_names:-}")
 	local ppe_cfg_esc=$(json_escape "${ppe_config:-}")
-	printf '{"npu_version":"%s","npu_loaded":%s,"npu_device":"%s","npu_clock":%d,"npu_cores":%d,"offload_bound":%d,"offload_total":%d,"memory_regions":%s,"cpu_cur_freq":%d,"cpu_hw_freq":%d,"cpu_governor":"%s","cpu_avail_governors":"%s","cpu_min_freq":%d,"cpu_max_freq":%d,"cpu_avail_freqs":"%s","cpu_count":%d,"pll_freq_mhz":%d,"cpu_freq_source":"%s","cpu_temp":%d,"npu_compatible":"%s","npu_fw_ver":"%s","npu_mem_region_names":"%s","ppe_config":"%s"}' \
+	printf '{"npu_version":"%s","npu_loaded":%s,"npu_device":"%s","npu_clock":%d,"npu_cores":%d,"offload_bound":%d,"offload_total":%d,"memory_regions":%s,"cpu_cur_freq":%d,"cpu_hw_freq":%d,"cpu_governor":"%s","cpu_avail_governors":"%s","cpu_min_freq":%d,"cpu_max_freq":%d,"cpu_avail_freqs":"%s","cpu_count":%d,"pll_freq_mhz":%d,"cpu_freq_source":"%s","cpu_temp":%d,"npu_compatible":"%s","npu_fw_ver":"%s","npu_mem_region_names":"%s","ppe_config":"%s","wifi_present":%s}' \
 		"$npu_ver_esc" "$npu_loaded" "$npu_dev_esc" "${npu_clock:-0}" "${npu_cores:-0}" "${offload_bound:-0}" "${offload_total:-0}" "$regions" \
 		"${cpu_cur_freq:-0}" "${cpu_hw_freq:-0}" "$gov_esc" "$govs_esc" "${cpu_min_freq:-0}" "${cpu_max_freq:-0}" "$freqs_esc" "${cpu_count:-0}" "${pll_freq_mhz:-0}" "$src_esc" "${cpu_temp:-0}" \
-		"$compat_esc" "$fw_ver_esc" "$mrn_esc" "$ppe_cfg_esc"
+		"$compat_esc" "$fw_ver_esc" "$mrn_esc" "$ppe_cfg_esc" "$wifi_present"
 }
 
 get_ppe_entries() {
@@ -488,9 +494,8 @@ get_frame_engine() {
 	local pse_used=$(( (psb >> 16) & 0xFFFF ))
 	local pse_free=$(( psb & 0x7FFF ))
 	# GDM counters (TX_OK, TX_DROP, RX_OK, RX_FC_DROP, RX_OVER_DROP)
-	# Read as hex to handle large 32-bit counters
-	# Note: GDM3 is not used on XG-040G-MD (hardware not connected / unused),
-	#       so only GDM1, GDM2, and GDM4 counters are read.
+	# GDMA block 布局: GDM1=0x1fb50xxx, GDM2=0x1fb51xxx, GDM4=0x1fb52xxx, GDM3=0x1fb53xxx
+	# GDM3 在 XG-040G-MD 上未接线（恒 0），在 W1700K 等板子上承载 WiFi 流量
 	local gdm1_tx=$(($(devmem 0x1fb50604)))
 	local gdm1_txd=$(($(devmem 0x1fb50608)))
 	local gdm1_rx=$(($(devmem 0x1fb50648)))
@@ -499,6 +504,10 @@ get_frame_engine() {
 	local gdm2_txd=$(($(devmem 0x1fb51608)))
 	local gdm2_rx=$(($(devmem 0x1fb51648)))
 	local gdm2_rxd=$(($(devmem 0x1fb5164c)))
+	local gdm3_tx=$(($(devmem 0x1fb53604)))
+	local gdm3_txd=$(($(devmem 0x1fb53608)))
+	local gdm3_rx=$(($(devmem 0x1fb53648)))
+	local gdm3_rxd=$(($(devmem 0x1fb5364c)))
 	local gdm4_tx=$(($(devmem 0x1fb52604)))
 	local gdm4_txd=$(($(devmem 0x1fb52608)))
 	local gdm4_rx=$(($(devmem 0x1fb52648)))
@@ -517,6 +526,7 @@ get_frame_engine() {
 	printf '{"pse_ports":[%s],"pse_used":%d,"pse_free":%d,' "$pse_ports" "$pse_used" "$pse_free"
 	printf '"gdm1":{"tx":%d,"tx_drop":%d,"rx":%d,"rx_drop":%d},' "$gdm1_tx" "$gdm1_txd" "$gdm1_rx" "$gdm1_rxd"
 	printf '"gdm2":{"tx":%d,"tx_drop":%d,"rx":%d,"rx_drop":%d},' "$gdm2_tx" "$gdm2_txd" "$gdm2_rx" "$gdm2_rxd"
+	printf '"gdm3":{"tx":%d,"tx_drop":%d,"rx":%d,"rx_drop":%d},' "$gdm3_tx" "$gdm3_txd" "$gdm3_rx" "$gdm3_rxd"
 	printf '"gdm4":{"tx":%d,"tx_drop":%d,"rx":%d,"rx_drop":%d},' "$gdm4_tx" "$gdm4_txd" "$gdm4_rx" "$gdm4_rxd"
 	printf '"cdm1":{"tx":%d,"rx_cpu":%d,"rx_hwf":%d,"rx_cpu_drop":%d,"rx_hwf_drop":%d},' "$cdm1_tx" "$cdm1_rxcpu" "$cdm1_rxhwf" "$cdm1_rxcpud" "$cdm1_rxhwfd"
 	printf '"cdm2":{"tx":%d,"rx_cpu":%d,"rx_hwf":%d,"rx_cpu_drop":%d,"rx_hwf_drop":%d}}' "$cdm2_tx" "$cdm2_rxcpu" "$cdm2_rxhwf" "$cdm2_rxcpud" "$cdm2_rxhwfd"
