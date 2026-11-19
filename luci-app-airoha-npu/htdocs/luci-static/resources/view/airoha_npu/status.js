@@ -246,7 +246,7 @@ function renderFeDiagram(fe, st) {
 			E('div', { 'class': 'soc-label', 'style': 'margin-bottom:6px' }, label),
 			E('div', { 'style': 'display:flex;align-items:center;min-height:20px;font-size:12px;margin-bottom:4px' }, [
 				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('CPU转发: ') + fmtK(d.rx_cpu||0))]),
-				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('硬件转发: ') + (key === 'cdm1' ? _('无') : fmtK(d.rx_hwf||0)))]),
+				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('硬件转发: ') + fmtK((d.rx_hwf||0)+(d.rx_hwf_fast||0)))]),
 				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('发送: ') + fmtK(d.tx||0))])
 			]),
 			// 队列占用为 PSE 瞬时状态（128B 页），非累计包数；丢包取 CDM 自身 RXCPU/RXHWF 丢包计数。
@@ -267,25 +267,44 @@ function renderFeDiagram(fe, st) {
 	var pseP = pseT>0 ? ((fe.pse_used/pseT)*100).toFixed(1) : '0';
 	var pseCol = parseFloat(pseP)>80?'#f44336':parseFloat(pseP)>50?'#ff9800':'#4caf50';
 
-	// 硬件实时卸载率提升到顶部与 PSE 缓冲区并列：取 CDM2 两次轮询的计数增量（实时区间率），非开机累计。
-	// _prevFe 为空=首轮无基准；计数回退=驱动重载/回绕：两者都显示“采样中”。
-	var c2 = fe.cdm2 || {};
-	var c2prev = (_prevFe && _prevFe.cdm2) ? _prevFe.cdm2 : null;
-	var offPct = 0, offText = _('采样中'), offCol = 'var(--soc-border)';
-	if (c2prev) {
-		var odcpu = (c2.rx_cpu||0) - (c2prev.rx_cpu||0);
-		var odhwf = (c2.rx_hwf||0) - (c2prev.rx_hwf||0);
-		if (odcpu >= 0 && odhwf >= 0) {
-			var odtot = odcpu + odhwf;
-			if (odtot === 0) {
-				offText = _('空闲');
-			} else {
-				offPct = odhwf / odtot * 100;
-				offText = offPct.toFixed(1) + '%';
-				offCol = offPct > 80 ? '#4caf50' : offPct > 50 ? '#ff9800' : '#9e9e9e';
-			}
-		}
+	// 硬件实时转发：CDM1(LAN 侧)/CDM2(WAN 侧) 各取两次轮询的 RXHWF/RXCPU 计数增量之比（实时区间率），非开机累计。
+	// _prevFe 为空=首轮无基准；计数回退=驱动重载/回绕：都显示“采样中”。
+	function feRate(key) {
+		var c = fe[key] || {};
+		var p = (_prevFe && _prevFe[key]) ? _prevFe[key] : null;
+		var r = { pct: 0, text: _('采样中'), col: 'var(--soc-border)' };
+		if (!p) return r;
+		var dcpu = (c.rx_cpu||0) - (p.rx_cpu||0);
+		// 硬件转发包含两套机制：CDM1 的 LAN↔LAN 桥接走 RXHWF_FAST（0x598），CDM2 的 WAN 路由/PPE 走 RXHWF_OK（0x594）。
+		// 单一 CDM 上二者互斥（实测 CDM1 的 OK 恒 0、CDM2 的 FAST 恒 0），故求和不会重复计。
+		var dhwf = ((c.rx_hwf||0)+(c.rx_hwf_fast||0)) - ((p.rx_hwf||0)+(p.rx_hwf_fast||0));
+		if (dcpu < 0 || dhwf < 0) return r;
+		var tot = dcpu + dhwf;
+		if (tot === 0) { r.text = _('空闲'); return r; }
+		r.pct = dhwf / tot * 100;
+		r.text = r.pct.toFixed(1) + '%';
+		r.col = r.pct > 80 ? '#4caf50' : r.pct > 50 ? '#ff9800' : '#9e9e9e';
+		return r;
 	}
+	var rCdm1 = feRate('cdm1');
+	var rCdm2 = feRate('cdm2');
+
+	// PPE 卡片：两端合计的硬件转发占比（区间增量加权，非两条进度条平均）。
+	function feRateAll() {
+		var keys = ['cdm1', 'cdm2'];
+		var c1 = fe.cdm1 || {}, c2 = fe.cdm2 || {};
+		var p1 = (_prevFe && _prevFe.cdm1) || null, p2 = (_prevFe && _prevFe.cdm2) || null;
+		if (!p1 || !p2) return { text: _('采样中') };
+		var r = function(o, k) { return o[k] || 0; };
+		var dcpu = (r(c1,'rx_cpu')+r(c2,'rx_cpu')) - (r(p1,'rx_cpu')+r(p2,'rx_cpu'));
+		var hwf = function(o) { return r(o,'rx_hwf') + r(o,'rx_hwf_fast'); };
+		var dhwf = (hwf(c1)+hwf(c2)) - (hwf(p1)+hwf(p2));
+		if (dcpu < 0 || dhwf < 0) return { text: _('采样中') };
+		var tot = dcpu + dhwf;
+		if (tot === 0) return { text: _('空闲') };
+		return { text: (dhwf / tot * 100).toFixed(1) + '%' };
+	}
+	var rAll = feRateAll();
 
 	// PPE engines card
 	var ppeCard = E('div', { 'class': 'soc-fe-ppe soc-fe-card' }, [
@@ -302,14 +321,29 @@ function renderFeDiagram(fe, st) {
 				E('span', { 'class': 'soc-muted' }, _('总计: ')),
 				E('span', { 'class': 'soc-text', 'id': 'fe-ppe-total' }, (st.offload_total||0).toString())
 			]),
-			E('span', { 'style': 'flex:1' }, [])
+			E('span', { 'style': 'flex:1' }, [
+				E('span', { 'class': 'soc-muted' }, _('硬件转发: ')),
+				E('span', { 'class': 'soc-text', 'id': 'fe-hwf-rate' }, rAll.text)
+			])
 		])
 	]);
 
+	// 顶部进度条：PSE 共享缓冲区 | CDM1 硬件实时转发 | CDM2 硬件实时转发；窄屏 flex-wrap 自动换行。
+	function rateBar(title, r) {
+		return E('div', { 'class': 'soc-fe-pse', 'style': 'flex:1 1 220px;min-width:0' }, [
+			E('div', { 'style': 'display:flex;justify-content:space-between;margin-bottom:4px' }, [
+				E('span', { 'class': 'soc-text', 'style': 'font-weight:bold;font-size:13px' }, title),
+				E('span', { 'class': 'soc-muted', 'style': 'font-size:12px' }, r.text)
+			]),
+			E('div', { 'class': 'soc-bar-track', 'style': 'height:8px' }, [
+				E('div', { 'style': 'background:'+r.col+';height:100%;width:'+r.pct+'%;border-radius:4px;transition:width .5s' })
+			])
+		]);
+	}
+
 	var diagram = E('div', { 'id': 'fe-diagram' }, [
-		// 顶部并列：PSE 共享缓冲区 | 硬件实时卸载（CDM2）；窄屏 flex-wrap 自动换行堆叠。
 		E('div', { 'style': 'display:flex;gap:12px;flex-wrap:wrap;margin:0 8px 10px' }, [
-			E('div', { 'class': 'soc-fe-pse', 'style': 'flex:1 1 260px;min-width:0' }, [
+			E('div', { 'class': 'soc-fe-pse', 'style': 'flex:1 1 220px;min-width:0' }, [
 				E('div', { 'style': 'display:flex;justify-content:space-between;margin-bottom:4px' }, [
 					E('span', { 'class': 'soc-text', 'style': 'font-weight:bold;font-size:13px' }, _('PSE 共享缓冲区')),
 					E('span', { 'class': 'soc-muted', 'style': 'font-size:12px' }, (fe.pse_used||0) + _(' 已用 / ') + (fe.pse_free||0) + _(' 空闲 (') + pseP + '%)')
@@ -318,15 +352,8 @@ function renderFeDiagram(fe, st) {
 					E('div', { 'style': 'background:'+pseCol+';height:100%;width:'+pseP+'%;border-radius:4px;transition:width .5s' })
 				])
 			]),
-			E('div', { 'class': 'soc-fe-pse', 'style': 'flex:1 1 260px;min-width:0' }, [
-				E('div', { 'style': 'display:flex;justify-content:space-between;margin-bottom:4px' }, [
-					E('span', { 'class': 'soc-text', 'style': 'font-weight:bold;font-size:13px' }, _('硬件实时卸载') + ' (CDM2)'),
-					E('span', { 'class': 'soc-muted', 'style': 'font-size:12px' }, offText)
-				]),
-				E('div', { 'class': 'soc-bar-track', 'style': 'height:8px' }, [
-					E('div', { 'style': 'background:'+offCol+';height:100%;width:'+offPct+'%;border-radius:4px;transition:width .5s' })
-				])
-			])
+			rateBar(_('CDM1 硬件实时转发'), rCdm1),
+			rateBar(_('CDM2 硬件实时转发'), rCdm2)
 		]),
 		// 双栏: 左 GDM 端口 | 右 CDM + PPE
 		E('div', { 'class': 'soc-fe-layout' }, [
@@ -337,8 +364,8 @@ function renderFeDiagram(fe, st) {
 				st.wifi_present ? gdmCard('gdm3', 'WiFi', 'GDM3 (WiFi DMA)', '#9c27b0', 3) : null
 			]),
 			E('div', { 'class': 'soc-fe-right' }, [
-				cdmCard('cdm1', 'CDM1', 'CPU DMA 1 (控制报文: ARP/DHCP/ICMP)', 2),
-				cdmCard('cdm2', 'CDM2', 'CPU DMA 2 (卸载数据流: PPE 转发)', 4),
+				cdmCard('cdm1', 'CDM1', _('LAN 侧 CPU-DMA'), 2),
+				cdmCard('cdm2', 'CDM2', _('WAN 侧 CPU-DMA'), 4),
 				ppeCard
 			])
 		])
@@ -450,7 +477,12 @@ function renderPpeConfigRows(config) {
 
 /* ── PPE Table ── */
 function renderPpeRows(entries) {
-	return entries.slice(0,100).map(function(e) {
+	var sorted = entries.slice().sort(function(a, b) {
+		var ab = a.state === 'BND' ? 0 : 1;
+		var bb = b.state === 'BND' ? 0 : 1;
+		return ab - bb;
+	});
+	return sorted.slice(0,100).map(function(e) {
 		var eth = e.eth||''; if(eth==='00:00:00:00:00:00->00:00:00:00:00:00') eth='-';
 		return E('tr',{'class':'tr'},[
 			E('td',{'class':'td'},e.index), E('td',{'class':'td'},E('span',{'class':e.state==='BND'?'label-success':''},e.state)),
@@ -520,7 +552,7 @@ return view.extend({
 					E('table',{'class':'table','id':'ppe-entries-table'},[
 						E('tr',{'class':'tr cbi-section-table-titles'},[
 							E('th',{'class':'th'},_('索引')), E('th',{'class':'th'},_('状态')), E('th',{'class':'th'},_('类型')),
-							E('th',{'class':'th'},_('原始流')), E('th',{'class':'th'},_('新流')), E('th',{'class':'th'},_('以太网'))
+							E('th',{'class':'th'},_('原始转发流')), E('th',{'class':'th'},_('NAT 后转发流')), E('th',{'class':'th'},_('MAC 地址'))
 						])
 					].concat(renderPpeRows(entries)))
 				])
