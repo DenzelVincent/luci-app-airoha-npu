@@ -533,8 +533,8 @@ get_frame_engine() {
 		[ -n "$gdm_json" ] && gdm_json="${gdm_json},"
 		gdm_json="${gdm_json}\"${gdm_key}\":{\"tx\":$(( (txh << 32) + txl )),\"rx\":$(( (rxh << 32) + rxl )),\"tx_drop\":${txd},\"rx_fc_drop\":${fcd},\"rx_rc_drop\":${rcd},\"rx_over_drop\":${ovd},\"rx_err_drop\":${erd}}"
 	done
-	# CDM 计数器按目的地分流统计 RX 丢包：CPU / 硬件慢路径 / 硬件 FAST 路径，三者互斥。
-	# RXOQ5_DROP(+0xac) 是同一 HWF 队列的按队列视角，不并入，避免重复计数。
+	# CDM 丢包汇总由前端按 CPU + 硬件转发两路做；实测 RXHWF_DROP(0xa4) 已包含 FAST 子集
+	# （CDM1 两计数恒等），RXHWF_FAST_DROP(0xa8) 只作明细返回不叠加；RXOQ5_DROP(0xac) 是同一 HWF 队列视角，也不计。
 	local cdm_json="" cdm_key cdm_base
 	for spec in "cdm1 0x1fb50500" "cdm2 0x1fb51500"; do
 		cdm_key=${spec%% *}

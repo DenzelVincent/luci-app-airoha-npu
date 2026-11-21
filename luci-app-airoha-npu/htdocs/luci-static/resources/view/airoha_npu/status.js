@@ -242,15 +242,16 @@ function renderFeDiagram(fe, st) {
 		var d = fe[key] || {};
 		var prev = (_prevFe && _prevFe[key]) ? _prevFe[key] : null;
 		var pq = psePort != null ? ports.find(function(p){ return p.port === psePort; }) : null;
-		// CDM 丢包按目的地分三路统计（CPU / 硬件慢路径 / 硬件 FAST 路径），三者互斥。
-		var drop = (d.rx_cpu_drop||0) + (d.rx_hwf_drop||0) + (d.rx_hwf_fast_drop||0);
+		// CDM 丢包 = CPU 路径 + 硬件转发路径。实测 RXHWF_DROP 已含 FAST 子集（CDM1 两计数恒等，0x2CB=0x2CB），
+		// FAST 丢包只作明细展示，不叠加，否则重复计数。
+		var drop = (d.rx_cpu_drop||0) + (d.rx_hwf_drop||0);
 		// 累计丢包再大也属历史；只有本区间仍在增长才标红，避免把历史丢包误报成当前故障。
-		var dropPrev = prev ? (prev.rx_cpu_drop||0) + (prev.rx_hwf_drop||0) + (prev.rx_hwf_fast_drop||0) : 0;
+		var dropPrev = prev ? (prev.rx_cpu_drop||0) + (prev.rx_hwf_drop||0) : 0;
 		var dropActive = prev && drop > dropPrev;
 		var dropTip = _('开机累计') + '\n' +
 			_('CPU 收包丢弃: ') + (d.rx_cpu_drop||0) + '\n' +
 			_('硬件转发丢弃: ') + (d.rx_hwf_drop||0) + '\n' +
-			_('FAST 转发丢弃: ') + (d.rx_hwf_fast_drop||0);
+			_('其中 FAST 路径: ') + (d.rx_hwf_fast_drop||0) + _('（已含上项）');
 		return E('div', { 'class': 'soc-fe-cdm soc-fe-card', 'style': 'border-left:3px solid #607d8b' }, [
 			E('div', { 'style': 'display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px' }, [
 				E('span', { 'style': 'font-weight:bold;color:#607d8b;font-size:14px' }, name),
@@ -262,7 +263,7 @@ function renderFeDiagram(fe, st) {
 				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('硬件转发: ') + fmtK((d.rx_hwf||0)+(d.rx_hwf_fast||0)))]),
 				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('发送: ') + fmtK(d.tx||0))])
 			]),
-			// 队列占用为 PSE 瞬时状态（128B 页），非累计包数；丢包为 CDM 自身 RXCPU/RXHWF/FAST 三路累计，仅在增长时标红。
+			// 队列占用为 PSE 瞬时状态（128B 页），非累计包数；丢包为 CDM 自身 RXCPU+RXHWF 累计（HWF 含 FAST），仅在增长时标红。
 			E('div', { 'style': 'display:flex;align-items:center;min-height:20px;font-size:12px' }, [
 				E('span', { 'style': 'flex:1' }, pq ? [E('span', { 'class': 'soc-muted' }, _('入队占用: ') + pq.iq)] : []),
 				E('span', { 'style': 'flex:1' }, pq ? [E('span', { 'class': 'soc-muted' }, _('出队占用: ') + pq.oq)] : []),
