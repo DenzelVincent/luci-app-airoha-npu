@@ -166,19 +166,6 @@ function injectCSS() {
 
 /* ── Helpers ── */
 
-var psePortMap = [
-	{ name: 'GDM1', label: 'LAN2/3/4 1G',   color: '#ff9800' },
-	{ name: 'GDM2', label: 'PON & WAN',      color: '#4caf50' },
-	{ name: 'CDM1', label: 'CPU DMA 1',   color: '#607d8b' },
-	{ name: 'GDM3', label: 'WiFi',        color: '#9c27b0' },
-	{ name: 'CDM2', label: 'CPU DMA 2',   color: '#607d8b' },
-	{ name: 'PPE0', label: 'PPE Eng 0',   color: '#2196f3' },
-	{ name: 'PPE1', label: 'PPE Eng 1',   color: '#2196f3' },
-	{ name: 'PPE2', label: 'PPE Eng 2',   color: '#2196f3' },
-	{ name: 'CDM3', label: 'CPU DMA 3',   color: '#607d8b' },
-	{ name: 'GDM4', label: 'LAN1 2.5G',   color: '#ff9800' }
-];
-
 function fmtFreq(khz) { return (!khz || khz === 0) ? 'N/A' : (khz / 1000).toFixed(0) + ' MHz'; }
 function fmtK(n) {
 	if (!n || n === 0) return '0';
@@ -205,9 +192,26 @@ function renderFeDiagram(fe, st) {
 	var ports = Array.isArray(fe.pse_ports) ? fe.pse_ports : [];
 
 	// Helper: GDM card with PSE queue info
+	// PSE 端口号与上游驱动 enum fe_pse_port 一致：CDM1=0、GDM1=1、GDM2=2、GDM3=3、
+	// PPE1=4、CDM2=5、CDM3=6、CDM4=7、PPE2=8、GDM4=9，即 0x150+i*4 / 0x120+i*4 的下标。
 	function gdmCard(key, name, label, color, psePort) {
 		var d = fe[key] || {};
+		var prev = (_prevFe && _prevFe[key]) ? _prevFe[key] : null;
 		var pq = psePort != null ? ports.find(function(p){ return p.port === psePort; }) : null;
+		var prevPorts = (_prevFe && Array.isArray(_prevFe.pse_ports)) ? _prevFe.pse_ports : [];
+		var ppq = psePort != null ? prevPorts.find(function(p){ return p.port === psePort; }) : null;
+		// DMA 丢包 = 同一 COUNT 块的 5 类计数之和；累计值只作历史，仅本区间仍在增长时标红。
+		var drop = (d.tx_drop||0) + (d.rx_fc_drop||0) + (d.rx_rc_drop||0) + (d.rx_over_drop||0) + (d.rx_err_drop||0);
+		var dropPrev = prev ? (prev.tx_drop||0) + (prev.rx_fc_drop||0) + (prev.rx_rc_drop||0) + (prev.rx_over_drop||0) + (prev.rx_err_drop||0) : 0;
+		var dropActive = prev && drop > dropPrev;
+		var dropTip = _('开机累计（DMA 计数块）') + '\n' +
+			_('发送丢弃: ') + (d.tx_drop||0) + '\n' +
+			_('接收流控: ') + (d.rx_fc_drop||0) + '\n' +
+			_('接收限速: ') + (d.rx_rc_drop||0) + '\n' +
+			_('接收溢出: ') + (d.rx_over_drop||0) + '\n' +
+			_('接收错误: ') + (d.rx_err_drop||0);
+		var qd = pq ? (pq.drops||0) : 0;
+		var qdActive = ppq && qd > (ppq.drops||0);
 		return E('div', { 'class': 'soc-fe-gdm soc-fe-card', 'style': 'border-left:3px solid '+color }, [
 			E('div', { 'style': 'display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px' }, [
 				E('span', { 'style': 'font-weight:bold;color:'+color+';font-size:14px' }, name),
@@ -217,15 +221,18 @@ function renderFeDiagram(fe, st) {
 			E('div', { 'style': 'display:flex;align-items:center;min-height:20px;font-size:12px;margin-bottom:4px' }, [
 				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('发送: ')), E('span', { 'class': 'soc-text' }, fmtK(d.tx))]),
 				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('接收: ')), E('span', { 'class': 'soc-text' }, fmtK(d.rx))]),
-				E('span', { 'style': 'flex:1' }, [
+				E('span', { 'style': 'flex:1', 'title': dropTip }, [
 					E('span', { 'class': 'soc-muted' }, _('DMA丢包: ')),
-					E('span', { 'style': 'color:' + ((d.tx_drop || 0) + (d.rx_drop || 0) > 0 ? '#f44336' : 'inherit') }, fmtK((d.tx_drop || 0) + (d.rx_drop || 0)))
+					E('span', { 'style': 'color:' + (dropActive ? '#f44336' : 'inherit') }, fmtK(drop))
 				])
 			]),
 			pq ? E('div', { 'style': 'display:flex;align-items:center;min-height:20px;font-size:12px' }, [
 				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('入队占用: ') + pq.iq)]),
 				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('出队占用: ') + pq.oq)]),
-				E('span', { 'style': 'flex:1' }, pq.drops > 0 ? [E('span', { 'style': 'color:#f44336' }, _('队列丢包: ') + fmtK(pq.drops))] : [])
+				E('span', { 'style': 'flex:1', 'title': _('PSE 端口 P') + psePort + _(' 队列丢弃（开机累计）') }, qd > 0 ? [
+					E('span', { 'class': 'soc-muted' }, _('队列丢包: ')),
+					E('span', { 'style': 'color:' + (qdActive ? '#f44336' : 'inherit') }, fmtK(qd))
+				] : [])
 			]) : null
 		]);
 	}
@@ -235,9 +242,15 @@ function renderFeDiagram(fe, st) {
 		var d = fe[key] || {};
 		var prev = (_prevFe && _prevFe[key]) ? _prevFe[key] : null;
 		var pq = psePort != null ? ports.find(function(p){ return p.port === psePort; }) : null;
-		var drop = (d.rx_cpu_drop||0) + (d.rx_hwf_drop||0);
+		// CDM 丢包按目的地分三路统计（CPU / 硬件慢路径 / 硬件 FAST 路径），三者互斥。
+		var drop = (d.rx_cpu_drop||0) + (d.rx_hwf_drop||0) + (d.rx_hwf_fast_drop||0);
 		// 累计丢包再大也属历史；只有本区间仍在增长才标红，避免把历史丢包误报成当前故障。
-		var dropActive = prev && drop > ((prev.rx_cpu_drop||0) + (prev.rx_hwf_drop||0));
+		var dropPrev = prev ? (prev.rx_cpu_drop||0) + (prev.rx_hwf_drop||0) + (prev.rx_hwf_fast_drop||0) : 0;
+		var dropActive = prev && drop > dropPrev;
+		var dropTip = _('开机累计') + '\n' +
+			_('CPU 收包丢弃: ') + (d.rx_cpu_drop||0) + '\n' +
+			_('硬件转发丢弃: ') + (d.rx_hwf_drop||0) + '\n' +
+			_('FAST 转发丢弃: ') + (d.rx_hwf_fast_drop||0);
 		return E('div', { 'class': 'soc-fe-cdm soc-fe-card', 'style': 'border-left:3px solid #607d8b' }, [
 			E('div', { 'style': 'display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px' }, [
 				E('span', { 'style': 'font-weight:bold;color:#607d8b;font-size:14px' }, name),
@@ -249,11 +262,11 @@ function renderFeDiagram(fe, st) {
 				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('硬件转发: ') + fmtK((d.rx_hwf||0)+(d.rx_hwf_fast||0)))]),
 				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('发送: ') + fmtK(d.tx||0))])
 			]),
-			// 队列占用为 PSE 瞬时状态（128B 页），非累计包数；丢包取 CDM 自身 RXCPU/RXHWF 丢包计数。
+			// 队列占用为 PSE 瞬时状态（128B 页），非累计包数；丢包为 CDM 自身 RXCPU/RXHWF/FAST 三路累计，仅在增长时标红。
 			E('div', { 'style': 'display:flex;align-items:center;min-height:20px;font-size:12px' }, [
 				E('span', { 'style': 'flex:1' }, pq ? [E('span', { 'class': 'soc-muted' }, _('入队占用: ') + pq.iq)] : []),
 				E('span', { 'style': 'flex:1' }, pq ? [E('span', { 'class': 'soc-muted' }, _('出队占用: ') + pq.oq)] : []),
-				E('span', { 'style': 'flex:1' }, [
+				E('span', { 'style': 'flex:1', 'title': dropTip }, [
 					E('span', { 'class': 'soc-muted' }, _('丢包: ')),
 					E('span', { 'style': 'color:' + (dropActive ? '#f44336' : 'inherit') }, fmtK(drop))
 				])
@@ -312,7 +325,7 @@ function renderFeDiagram(fe, st) {
 	var ppeCard = E('div', { 'class': 'soc-fe-ppe soc-fe-card' }, [
 		E('div', { 'style': 'display:flex;justify-content:space-between;align-items:center;margin-bottom:2px' }, [
 			E('span', { 'style': 'font-weight:bold;color:#2196f3;font-size:14px' }, 'PPE ' + _('引擎')),
-			E('span', { 'class': 'soc-label' }, 'P5 / P6 / P7')
+			E('span', { 'class': 'soc-label' }, 'P4 / P8')
 		]),
 		E('div', { 'style': 'display:flex;align-items:center;min-height:20px;font-size:12px;flex:1' }, [
 			E('span', { 'style': 'flex:1' }, [
@@ -360,14 +373,14 @@ function renderFeDiagram(fe, st) {
 		// 双栏: 左 GDM 端口 | 右 CDM + PPE
 		E('div', { 'class': 'soc-fe-layout' }, [
 			E('div', { 'class': 'soc-fe-left' }, [
-				gdmCard('gdm2', 'PON & WAN', 'GDM2 (USXGMII 10G)', '#4caf50', 1),
+				gdmCard('gdm2', 'PON & WAN', 'GDM2 (USXGMII 10G)', '#4caf50', 2),
 				gdmCard('gdm4', 'LAN1', 'GDM4 (EN8811H 2.5G)', '#ff9800', 9),
-				gdmCard('gdm1', 'LAN2/3/4', 'GDM1 (内部交换 1G)', '#ff9800', 0),
+				gdmCard('gdm1', 'LAN2/3/4', 'GDM1 (内部交换 1G)', '#ff9800', 1),
 				st.wifi_present ? gdmCard('gdm3', 'WiFi', 'GDM3 (WiFi DMA)', '#9c27b0', 3) : null
 			]),
 			E('div', { 'class': 'soc-fe-right' }, [
-				cdmCard('cdm1', 'CDM1', _('LAN 侧 CPU-DMA'), 2),
-				cdmCard('cdm2', 'CDM2', _('WAN 侧 CPU-DMA'), 4),
+				cdmCard('cdm1', 'CDM1', _('LAN 侧 CPU-DMA'), 0),
+				cdmCard('cdm2', 'CDM2', _('WAN 侧 CPU-DMA'), 5),
 				ppeCard
 			])
 		])

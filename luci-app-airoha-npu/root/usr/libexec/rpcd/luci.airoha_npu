@@ -487,15 +487,23 @@ get_frame_engine() {
 		echo '{"error":"devmem not available"}'
 		return
 	fi
-	# PSE queue status (IQ=hi16, OQ=lo16) and drop counts for each port
+	# 读寄存器，失败（地址未解码/越出映射）时按 0 处理，避免空算术表达式中断整个 RPC。
+	fe_rd() {
+		local v
+		v=$(devmem "$1" 2>/dev/null)
+		echo "${v:-0}"
+	}
+	# PSE 队列状态：Q_USE_STA 的 [30:16]=入队页数、[14:0]=出队页数（各 15 位，bit31/bit15 不属该字段）。
+	# 端口下标即上游 enum fe_pse_port：CDM1=0、GDM1=1、GDM2=2、GDM3=3、PPE1=4、CDM2=5、
+	# CDM3=6、CDM4=7、PPE2=8、GDM4=9；P10/CDM5 在本芯片没有这组队列/丢弃寄存器。
 	local i reg_q reg_d pse_ports=""
 	for i in 0 1 2 3 4 5 6 7 8 9; do
 		reg_q=$(printf "0x%x" $((0x1fb50150 + i * 4)))
 		reg_d=$(printf "0x%x" $((0x1fb50120 + i * 4)))
 		local qval=$(($(devmem $reg_q)))
 		local dval=$(($(devmem $reg_d)))
-		local iq=$(( (qval >> 16) & 0xFFFF ))
-		local oq=$(( qval & 0xFFFF ))
+		local iq=$(( (qval >> 16) & 0x7FFF ))
+		local oq=$(( qval & 0x7FFF ))
 		[ -n "$pse_ports" ] && pse_ports="${pse_ports},"
 		pse_ports="${pse_ports}{\"port\":${i},\"iq\":${iq},\"oq\":${oq},\"drops\":${dval}}"
 	done
@@ -505,45 +513,36 @@ get_frame_engine() {
 	local fqs=$(($(devmem 0x1fb50108)))
 	local fq_limit=$(( fqc & 0x7FFF ))
 	local fq_free=$(( fqs & 0x7FFF ))
-	# GDM counters (TX_OK, TX_DROP, RX_OK, RX_FC_DROP, RX_OVER_DROP)
-	# GDMA block 布局: GDM1=0x1fb50xxx, GDM2=0x1fb51xxx, GDM4=0x1fb52xxx, GDM3=0x1fb53xxx
-	# GDM3 在 XG-040G-MD 上未接线（恒 0），在 W1700K 等板子上承载 WiFi 流量
-	local gdm1_tx=$(($(devmem 0x1fb50604)))
-	local gdm1_txd=$(($(devmem 0x1fb50608)))
-	local gdm1_rx=$(($(devmem 0x1fb50648)))
-	local gdm1_rxd=$(($(devmem 0x1fb5064c)))
-	local gdm2_tx=$(($(devmem 0x1fb51604)))
-	local gdm2_txd=$(($(devmem 0x1fb51608)))
-	local gdm2_rx=$(($(devmem 0x1fb51648)))
-	local gdm2_rxd=$(($(devmem 0x1fb5164c)))
-	local gdm3_tx=$(($(devmem 0x1fb53604)))
-	local gdm3_txd=$(($(devmem 0x1fb53608)))
-	local gdm3_rx=$(($(devmem 0x1fb53648)))
-	local gdm3_rxd=$(($(devmem 0x1fb5364c)))
-	local gdm4_tx=$(($(devmem 0x1fb52604)))
-	local gdm4_txd=$(($(devmem 0x1fb52608)))
-	local gdm4_rx=$(($(devmem 0x1fb52648)))
-	local gdm4_rxd=$(($(devmem 0x1fb5264c)))
-	# CDM counters (TX_OK, RXCPU_OK, RXHWF_OK, RXCPU_DROP, RXHWF_DROP)
-	local cdm1_tx=$(($(devmem 0x1fb50580)))
-	local cdm1_rxcpu=$(($(devmem 0x1fb50590)))
-	local cdm1_rxhwf=$(($(devmem 0x1fb50594)))
-	local cdm1_rxhwff=$(($(devmem 0x1fb50598)))
-	local cdm1_rxcpud=$(($(devmem 0x1fb505a0)))
-	local cdm1_rxhwfd=$(($(devmem 0x1fb505a4)))
-	local cdm2_tx=$(($(devmem 0x1fb51580)))
-	local cdm2_rxcpu=$(($(devmem 0x1fb51590)))
-	local cdm2_rxhwf=$(($(devmem 0x1fb51594)))
-	local cdm2_rxhwff=$(($(devmem 0x1fb51598)))
-	local cdm2_rxcpud=$(($(devmem 0x1fb515a0)))
-	local cdm2_rxhwfd=$(($(devmem 0x1fb515a4)))
-	printf '{"pse_ports":[%s],"fq_limit":%d,"fq_free":%d,' "$pse_ports" "$fq_limit" "$fq_free"
-	printf '"gdm1":{"tx":%d,"tx_drop":%d,"rx":%d,"rx_drop":%d},' "$gdm1_tx" "$gdm1_txd" "$gdm1_rx" "$gdm1_rxd"
-	printf '"gdm2":{"tx":%d,"tx_drop":%d,"rx":%d,"rx_drop":%d},' "$gdm2_tx" "$gdm2_txd" "$gdm2_rx" "$gdm2_rxd"
-	printf '"gdm3":{"tx":%d,"tx_drop":%d,"rx":%d,"rx_drop":%d},' "$gdm3_tx" "$gdm3_txd" "$gdm3_rx" "$gdm3_rxd"
-	printf '"gdm4":{"tx":%d,"tx_drop":%d,"rx":%d,"rx_drop":%d},' "$gdm4_tx" "$gdm4_txd" "$gdm4_rx" "$gdm4_rxd"
-	printf '"cdm1":{"tx":%d,"rx_cpu":%d,"rx_hwf":%d,"rx_hwf_fast":%d,"rx_cpu_drop":%d,"rx_hwf_drop":%d},' "$cdm1_tx" "$cdm1_rxcpu" "$cdm1_rxhwf" "$cdm1_rxhwff" "$cdm1_rxcpud" "$cdm1_rxhwfd"
-	printf '"cdm2":{"tx":%d,"rx_cpu":%d,"rx_hwf":%d,"rx_hwf_fast":%d,"rx_cpu_drop":%d,"rx_hwf_drop":%d}}' "$cdm2_tx" "$cdm2_rxcpu" "$cdm2_rxhwf" "$cdm2_rxhwff" "$cdm2_rxcpud" "$cdm2_rxhwfd"
+	# GDM 计数器位于 COUNT 块：GDM1/GDM2/GDM3/GDM4 = 0x600/0x1600/0x1200/0x2600（GDM3 在 XG-040G-MD 上未接线，W1700K 等主板承载 WiFi）。
+	# 发送/接收为 64 位累计：低 32 位在 COUNT+0x04/+0x48，高 32 位在 +0x180/+0x190（与上游 airoha_eth 驱动读取顺序一致，先高后低）。
+	# DMA 丢包取同块 5 类计数：TX_DROP(+0x08) 与 RX 的 FC/RC/OVER/ERR(+0x4c/0x50/0x54/0x58)。
+	# COUNT+0x18/+0x68 的 ETH MIB 丢包属 MAC 层统计（内核 tx_dropped/rx_dropped 口径），与 DMA 丢包不同层，不并入。
+	local gdm_json="" gdm_key gdm_base spec
+	for spec in "gdm1 0x1fb50600" "gdm2 0x1fb51600" "gdm3 0x1fb51200" "gdm4 0x1fb52600"; do
+		gdm_key=${spec%% *}
+		gdm_base=$(( ${spec#* } ))
+		local txh=$(( $(fe_rd $((gdm_base + 0x180))) ))
+		local txl=$(( $(fe_rd $((gdm_base + 0x04))) ))
+		local rxh=$(( $(fe_rd $((gdm_base + 0x190))) ))
+		local rxl=$(( $(fe_rd $((gdm_base + 0x48))) ))
+		local txd=$(( $(fe_rd $((gdm_base + 0x08))) ))
+		local fcd=$(( $(fe_rd $((gdm_base + 0x4c))) ))
+		local rcd=$(( $(fe_rd $((gdm_base + 0x50))) ))
+		local ovd=$(( $(fe_rd $((gdm_base + 0x54))) ))
+		local erd=$(( $(fe_rd $((gdm_base + 0x58))) ))
+		[ -n "$gdm_json" ] && gdm_json="${gdm_json},"
+		gdm_json="${gdm_json}\"${gdm_key}\":{\"tx\":$(( (txh << 32) + txl )),\"rx\":$(( (rxh << 32) + rxl )),\"tx_drop\":${txd},\"rx_fc_drop\":${fcd},\"rx_rc_drop\":${rcd},\"rx_over_drop\":${ovd},\"rx_err_drop\":${erd}}"
+	done
+	# CDM 计数器按目的地分流统计 RX 丢包：CPU / 硬件慢路径 / 硬件 FAST 路径，三者互斥。
+	# RXOQ5_DROP(+0xac) 是同一 HWF 队列的按队列视角，不并入，避免重复计数。
+	local cdm_json="" cdm_key cdm_base
+	for spec in "cdm1 0x1fb50500" "cdm2 0x1fb51500"; do
+		cdm_key=${spec%% *}
+		cdm_base=$(( ${spec#* } ))
+		[ -n "$cdm_json" ] && cdm_json="${cdm_json},"
+		cdm_json="${cdm_json}\"${cdm_key}\":{\"tx\":$(( $(fe_rd $((cdm_base + 0x80))) )),\"rx_cpu\":$(( $(fe_rd $((cdm_base + 0x90))) )),\"rx_hwf\":$(( $(fe_rd $((cdm_base + 0x94))) )),\"rx_hwf_fast\":$(( $(fe_rd $((cdm_base + 0x98))) )),\"rx_cpu_drop\":$(( $(fe_rd $((cdm_base + 0xa0))) )),\"rx_hwf_drop\":$(( $(fe_rd $((cdm_base + 0xa4))) )),\"rx_hwf_fast_drop\":$(( $(fe_rd $((cdm_base + 0xa8))) ))}"
+	done
+	printf '{"pse_ports":[%s],"fq_limit":%d,"fq_free":%d,%s,%s}' "$pse_ports" "$fq_limit" "$fq_free" "$gdm_json" "$cdm_json"
 }
 
 case "$1" in
