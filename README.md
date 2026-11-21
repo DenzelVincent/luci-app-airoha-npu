@@ -38,7 +38,7 @@ Airoha AN7581 SoC 实时监测与管理面板，适用于 OpenWrt。涵盖 NPU �
 - PPE 引擎摘要（已绑定 / 总计条目数 / 两端合计硬件转发占比）
 
 ### Frame Engine 可视化
-- **PSE 共享缓冲区** 使用率指示条（拥塞指标）
+- **PSE 共享缓冲区** 占用率指示条（FQ 描述符池口径，拥塞指标）
 - **CDM1 / CDM2 硬件实时转发** 指示条 — 分别对应 LAN 侧 / WAN 侧 CPU-DMA 通道，硬件转发（RXHWF，含 LAN↔LAN 的 FAST 快速路径）与 CPU 路径（RXCPU）的实时区间占比
 - **GDM 端口卡片**，实时显示发送/接收/丢包计数与入队/出队状态：
   - GDM2：PON & WAN（USXGMII 10G）

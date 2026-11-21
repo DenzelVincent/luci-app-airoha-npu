@@ -262,9 +262,11 @@ function renderFeDiagram(fe, st) {
 	}
 
 
-	// PSE buffer
-	var pseT = (fe.pse_used||0)+(fe.pse_free||0);
-	var pseP = pseT>0 ? ((fe.pse_used/pseT)*100).toFixed(1) : '0';
+	// PSE 缓冲池占用按 FQ 描述符池计算：FQ_CFG=总数、FQ_STA=空闲数。
+	// 0x104（SHARE_BUF_STA）高位在 AN7581 上不回落到真实占用，实测常驻且超过池容量，不能用来算百分比。
+	var fqLimit = fe.fq_limit||0, fqFree = fe.fq_free||0;
+	var fqUsed = fqLimit>0 ? Math.max(0, fqLimit-fqFree) : 0;
+	var pseP = fqLimit>0 ? (fqUsed/fqLimit*100).toFixed(1) : '0';
 	var pseCol = parseFloat(pseP)>80?'#f44336':parseFloat(pseP)>50?'#ff9800':'#4caf50';
 
 	// 硬件实时转发：CDM1(LAN 侧)/CDM2(WAN 侧) 各取两次轮询的 RXHWF/RXCPU 计数增量之比（实时区间率），非开机累计。
@@ -346,7 +348,7 @@ function renderFeDiagram(fe, st) {
 			E('div', { 'class': 'soc-fe-pse', 'style': 'flex:1 1 220px;min-width:0' }, [
 				E('div', { 'style': 'display:flex;justify-content:space-between;margin-bottom:4px' }, [
 					E('span', { 'class': 'soc-text', 'style': 'font-weight:bold;font-size:13px' }, _('PSE 共享缓冲区')),
-					E('span', { 'class': 'soc-muted', 'style': 'font-size:12px' }, (fe.pse_used||0) + _(' 已用 / ') + (fe.pse_free||0) + _(' 空闲 (') + pseP + '%)')
+					E('span', { 'class': 'soc-muted', 'style': 'font-size:12px' }, fqUsed + ' / ' + fqLimit + _(' 已用 (') + pseP + '%)')
 				]),
 				E('div', { 'class': 'soc-bar-track', 'style': 'height:8px' }, [
 					E('div', { 'style': 'background:'+pseCol+';height:100%;width:'+pseP+'%;border-radius:4px;transition:width .5s' })
