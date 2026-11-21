@@ -200,10 +200,10 @@ function renderFeDiagram(fe, st) {
 		var pq = psePort != null ? ports.find(function(p){ return p.port === psePort; }) : null;
 		var prevPorts = (_prevFe && Array.isArray(_prevFe.pse_ports)) ? _prevFe.pse_ports : [];
 		var ppq = psePort != null ? prevPorts.find(function(p){ return p.port === psePort; }) : null;
-		// DMA 丢包 = 同一 COUNT 块的 5 类计数之和；累计值只作历史，仅本区间仍在增长时标红。
+		// DMA 丢包 = 同一 COUNT 块的 5 类计数之和；累计值保持常态色，本区间有新增才在数字后追加红色 +N。
 		var drop = (d.tx_drop||0) + (d.rx_fc_drop||0) + (d.rx_rc_drop||0) + (d.rx_over_drop||0) + (d.rx_err_drop||0);
 		var dropPrev = prev ? (prev.tx_drop||0) + (prev.rx_fc_drop||0) + (prev.rx_rc_drop||0) + (prev.rx_over_drop||0) + (prev.rx_err_drop||0) : 0;
-		var dropActive = prev && drop > dropPrev;
+		var dropDelta = prev ? drop - dropPrev : 0;
 		var dropTip = _('开机累计（DMA 计数块）') + '\n' +
 			_('发送丢弃: ') + (d.tx_drop||0) + '\n' +
 			_('接收流控: ') + (d.rx_fc_drop||0) + '\n' +
@@ -211,7 +211,7 @@ function renderFeDiagram(fe, st) {
 			_('接收溢出: ') + (d.rx_over_drop||0) + '\n' +
 			_('接收错误: ') + (d.rx_err_drop||0);
 		var qd = pq ? (pq.drops||0) : 0;
-		var qdActive = ppq && qd > (ppq.drops||0);
+		var qdDelta = ppq ? qd - (ppq.drops||0) : 0;
 		return E('div', { 'class': 'soc-fe-gdm soc-fe-card', 'style': 'border-left:3px solid '+color }, [
 			E('div', { 'style': 'display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px' }, [
 				E('span', { 'style': 'font-weight:bold;color:'+color+';font-size:14px' }, name),
@@ -223,7 +223,8 @@ function renderFeDiagram(fe, st) {
 				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('接收: ')), E('span', { 'class': 'soc-text' }, fmtK(d.rx))]),
 				E('span', { 'style': 'flex:1', 'title': dropTip }, [
 					E('span', { 'class': 'soc-muted' }, _('DMA丢包: ')),
-					E('span', { 'style': 'color:' + (dropActive ? '#f44336' : 'inherit') }, fmtK(drop))
+					E('span', { 'class': 'soc-text' }, fmtK(drop)),
+					dropDelta > 0 ? E('span', { 'style': 'color:#f44336;margin-left:4px' }, '+'+fmtK(dropDelta)) : null
 				])
 			]),
 			pq ? E('div', { 'style': 'display:flex;align-items:center;min-height:20px;font-size:12px' }, [
@@ -231,7 +232,8 @@ function renderFeDiagram(fe, st) {
 				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('出队占用: ') + pq.oq)]),
 				E('span', { 'style': 'flex:1', 'title': _('PSE 端口 P') + psePort + _(' 队列丢弃（开机累计）') }, qd > 0 ? [
 					E('span', { 'class': 'soc-muted' }, _('队列丢包: ')),
-					E('span', { 'style': 'color:' + (qdActive ? '#f44336' : 'inherit') }, fmtK(qd))
+					E('span', { 'class': 'soc-text' }, fmtK(qd)),
+					qdDelta > 0 ? E('span', { 'style': 'color:#f44336;margin-left:4px' }, '+'+fmtK(qdDelta)) : null
 				] : [])
 			]) : null
 		]);
@@ -243,11 +245,10 @@ function renderFeDiagram(fe, st) {
 		var prev = (_prevFe && _prevFe[key]) ? _prevFe[key] : null;
 		var pq = psePort != null ? ports.find(function(p){ return p.port === psePort; }) : null;
 		// CDM 丢包 = CPU 路径 + 硬件转发路径。实测 RXHWF_DROP 已含 FAST 子集（CDM1 两计数恒等，0x2CB=0x2CB），
-		// FAST 丢包只作明细展示，不叠加，否则重复计数。
+		// FAST 丢包只作明细展示，不叠加，否则重复计数。累计值保持常态色，新增量用红色 +N 标注。
 		var drop = (d.rx_cpu_drop||0) + (d.rx_hwf_drop||0);
-		// 累计丢包再大也属历史；只有本区间仍在增长才标红，避免把历史丢包误报成当前故障。
 		var dropPrev = prev ? (prev.rx_cpu_drop||0) + (prev.rx_hwf_drop||0) : 0;
-		var dropActive = prev && drop > dropPrev;
+		var dropDelta = prev ? drop - dropPrev : 0;
 		var dropTip = _('开机累计') + '\n' +
 			_('CPU 收包丢弃: ') + (d.rx_cpu_drop||0) + '\n' +
 			_('硬件转发丢弃: ') + (d.rx_hwf_drop||0) + '\n' +
@@ -263,13 +264,14 @@ function renderFeDiagram(fe, st) {
 				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('硬件转发: ') + fmtK((d.rx_hwf||0)+(d.rx_hwf_fast||0)))]),
 				E('span', { 'style': 'flex:1' }, [E('span', { 'class': 'soc-muted' }, _('发送: ') + fmtK(d.tx||0))])
 			]),
-			// 队列占用为 PSE 瞬时状态（128B 页），非累计包数；丢包为 CDM 自身 RXCPU+RXHWF 累计（HWF 含 FAST），仅在增长时标红。
+			// 队列占用为 PSE 瞬时状态（128B 页），非累计包数；丢包为 CDM 自身 RXCPU+RXHWF 累计（HWF 含 FAST），新增量以红色 +N 标注。
 			E('div', { 'style': 'display:flex;align-items:center;min-height:20px;font-size:12px' }, [
 				E('span', { 'style': 'flex:1' }, pq ? [E('span', { 'class': 'soc-muted' }, _('入队占用: ') + pq.iq)] : []),
 				E('span', { 'style': 'flex:1' }, pq ? [E('span', { 'class': 'soc-muted' }, _('出队占用: ') + pq.oq)] : []),
 				E('span', { 'style': 'flex:1', 'title': dropTip }, [
 					E('span', { 'class': 'soc-muted' }, _('丢包: ')),
-					E('span', { 'style': 'color:' + (dropActive ? '#f44336' : 'inherit') }, fmtK(drop))
+					E('span', { 'class': 'soc-text' }, fmtK(drop)),
+					dropDelta > 0 ? E('span', { 'style': 'color:#f44336;margin-left:4px' }, '+'+fmtK(dropDelta)) : null
 				])
 			])
 		]);
