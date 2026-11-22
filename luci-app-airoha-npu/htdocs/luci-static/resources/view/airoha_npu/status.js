@@ -48,11 +48,11 @@ var themeCSS = '\
 #ppe-entries-table{width:100%;table-layout:fixed}\
 #ppe-entries-table .th,#ppe-entries-table .td{text-align:center;vertical-align:middle;padding:5px 8px;font-size:12px}\
 #ppe-entries-table th:nth-child(1){width:5%}\
-#ppe-entries-table th:nth-child(2){width:4%}\
-#ppe-entries-table th:nth-child(3){width:6%}\
-#ppe-entries-table th:nth-child(4){width:41%}\
-#ppe-entries-table th:nth-child(5){width:22%}\
-#ppe-entries-table th:nth-child(6){width:22%}\
+#ppe-entries-table th:nth-child(2){width:5%}\
+#ppe-entries-table th:nth-child(3){width:5%}\
+#ppe-entries-table th:nth-child(4){width:45%}\
+#ppe-entries-table th:nth-child(5){width:20%}\
+#ppe-entries-table th:nth-child(6){width:20%}\
 #ppe-entries-table td:nth-child(-n+3){white-space:nowrap}\
 #ppe-entries-table td:nth-child(n+4){overflow-wrap:anywhere}\
 /* NPU table (row height set above) */\
