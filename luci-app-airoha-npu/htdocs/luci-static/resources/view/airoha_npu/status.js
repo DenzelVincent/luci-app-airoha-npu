@@ -50,9 +50,9 @@ var themeCSS = '\
 #ppe-entries-table th:nth-child(1){width:5%}\
 #ppe-entries-table th:nth-child(2){width:4%}\
 #ppe-entries-table th:nth-child(3){width:6%}\
-#ppe-entries-table th:nth-child(4){width:29%}\
-#ppe-entries-table th:nth-child(5){width:29%}\
-#ppe-entries-table th:nth-child(6){width:27%}\
+#ppe-entries-table th:nth-child(4){width:41%}\
+#ppe-entries-table th:nth-child(5){width:22%}\
+#ppe-entries-table th:nth-child(6){width:22%}\
 #ppe-entries-table td:nth-child(-n+3){white-space:nowrap}\
 #ppe-entries-table td:nth-child(n+4){overflow-wrap:anywhere}\
 /* NPU table (row height set above) */\
