@@ -47,12 +47,12 @@ var themeCSS = '\
 /* PPE 流表：固定百分比列宽，避免每次轮询随数据长度抖动；长字段自动折行保证完整显示 */\
 #ppe-entries-table{width:100%;table-layout:fixed}\
 #ppe-entries-table .th,#ppe-entries-table .td{text-align:center;vertical-align:middle;padding:5px 8px;font-size:12px}\
-#ppe-entries-table th:nth-child(1){width:7%}\
-#ppe-entries-table th:nth-child(2){width:7%}\
-#ppe-entries-table th:nth-child(3){width:8%}\
+#ppe-entries-table th:nth-child(1){width:5%}\
+#ppe-entries-table th:nth-child(2){width:4%}\
+#ppe-entries-table th:nth-child(3){width:6%}\
 #ppe-entries-table th:nth-child(4){width:29%}\
 #ppe-entries-table th:nth-child(5){width:29%}\
-#ppe-entries-table th:nth-child(6){width:20%}\
+#ppe-entries-table th:nth-child(6){width:27%}\
 #ppe-entries-table td:nth-child(-n+3){white-space:nowrap}\
 #ppe-entries-table td:nth-child(n+4){overflow-wrap:anywhere}\
 /* NPU table (row height set above) */\
