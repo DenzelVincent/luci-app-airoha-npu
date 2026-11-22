@@ -6,7 +6,7 @@ Airoha AN7581 SoC 实时监测与管理面板，适用于 OpenWrt。涵盖 NPU �
 
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 ![OpenWrt](https://img.shields.io/badge/OpenWrt-24.10%2B-brightgreen.svg)
-![Version](https://img.shields.io/badge/version-1.3.0-orange.svg)
+![Version](https://img.shields.io/badge/version-1.3.1-orange.svg)
 
 ## 界面截图
 
@@ -296,6 +296,11 @@ luci-app-airoha-npu/                                  # 仓库根 = feed 源
 | `setOverclock` | 直接 PLL 频率设定（500–1600 MHz，含回滚） | `freq_mhz` |
 
 ## 版本历史
+
+### v1.3.1
+- PPE 流表列宽改为固定百分比 5/5/5/45/20/20，按实测文本宽度分配，轮询时不再抖动
+- 第 4 列加宽后，表格宽度 ≥ 1220px 时 IPv6 长流不再折行
+- 表头与单元格内容统一居中
 
 ### v1.3.0
 - 硬件卸载引擎布局重构：双栏布局，GDM / CDM 卡片尺寸与间距统一
