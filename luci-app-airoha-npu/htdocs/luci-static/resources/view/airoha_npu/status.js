@@ -56,12 +56,16 @@ var themeCSS = '\
 #ppe-entries-table td:nth-child(-n+3){white-space:nowrap}\
 #ppe-entries-table td:nth-child(n+4){overflow-wrap:anywhere}\
 /* NPU table (row height set above) */\
-/* PPE config table */\
+/* PPE 配置表：项目/值/说明 三列；值等宽，说明可折行 */\
+#ppe-config-table{width:100%;table-layout:fixed}\
 #ppe-config-table .tr{height:32px}\
-#ppe-config-table .td,#ppe-config-table .th{vertical-align:middle;padding:4px 10px}\
-#ppe-config-table td:first-child,#ppe-config-table th:first-child{width:33%}\
-#ppe-config-table td:last-child,#ppe-config-table th:last-child{text-align:left}\
-#ppe-config-table td:last-child{font-family:monospace;font-size:12px}\
+#ppe-config-table .td,#ppe-config-table .th{vertical-align:middle;padding:4px 10px;text-align:left;font-size:12px;overflow-wrap:anywhere}\
+#ppe-config-table th:nth-child(1){width:24%}\
+#ppe-config-table th:nth-child(2){width:24%}\
+#ppe-config-table th:nth-child(3){width:52%}\
+#ppe-config-table td:nth-child(2){font-family:monospace;white-space:nowrap}\
+#ppe-config-table td:nth-child(3){color:var(--soc-muted)}\
+#ppe-config-table .ppe-cfg-group td{font-weight:600;font-size:12px;color:var(--soc-text);border-top:2px solid var(--soc-border);background:var(--soc-card-bg);padding-top:8px}\
 /* FE card统一边框和最小高度 */\
 .soc-fe-card{height:104px;display:flex;flex-direction:column}\
 .soc-fe-gdm,.soc-fe-cdm,.soc-fe-ppe,.soc-fe-pse{border:1px solid var(--soc-border);border-radius:8px;padding:10px 12px;margin-bottom:10px;background:var(--soc-card-bg)}\
@@ -197,6 +201,8 @@ function calcTotalMem(regions) {
 /* ── Frame Engine Diagram (NPU, PPE, and Ethernet offload) ── */
 // 跨轮询保存上一次帧引擎计数，供 CDM 计算实时区间卸载率（每 5 秒轮询一次）。
 var _prevFe = null;
+// 上一次 PPE 配置内容指纹：配置变化（驱动重载/接口增删）时重建配置表。
+var _ppeCfgKey = null;
 function renderFeDiagram(fe, st) {
 	st = st || {};
 	if (!fe || fe.error) return E('div', { 'class': 'soc-muted' }, _('devmem not available on this build'));
@@ -489,19 +495,118 @@ function renderOcControls() {
 	]);
 }
 
-/* ── PPE Config Table ── */
-function renderPpeConfigRows(config) {
-	if (!config) return [];
-	return config.split('\n').filter(function(line){ return line.trim(); }).map(function(line) {
-		var parts = line.split(':');
-		if (parts.length < 2) return null;
-		var key = parts[0].trim();
-		var val = parts.slice(1).join(':').trim();
-		return E('tr',{'class':'tr'},[
-			E('td',{'class':'td'}, E('code',{'style':'font-size:11px;color:var(--soc-muted)'}, key)),
-			E('td',{'class':'td'}, E('code',{'style':'font-size:11px'}, val))
-		]);
-	}).filter(Boolean);
+/* ── PPE Config Table ──
+   数据来自 /sys/kernel/debug/ppe/config（驱动原样输出），这里只做展示层翻译：
+   寄存器键 -> 中文项目名、十六进制补 0x、端口号 -> PSE 端口名，并合入同目录 bind_rate 的绑定上限。
+   未登记的新字段落到"其他"分组原样显示，保证不丢信息。 */
+var PPE_PORT_NAMES = {0:'CDM1',1:'GDM1',2:'GDM2',3:'GDM3',4:'PPE1',5:'CDM2',6:'CDM3',7:'CDM4',8:'PPE2',9:'GDM4'};
+
+// 端口下标即上游 enum fe_pse_port。
+function ppePortName(n) {
+	return PPE_PORT_NAMES[n] ? n + '（' + PPE_PORT_NAMES[n] + '）' : String(n);
+}
+
+function ppeHex(val) {
+	return /^[0-9a-fA-F]{8}$/.test(val) ? '0x' + val.toLowerCase() : val;
+}
+
+// 端口使能掩码：低 8 位逐位对应 PSE 端口 0-7，高 24 位为保留位。
+function ppePortMaskDesc(val) {
+	if (!/^[0-9a-fA-F]{8}$/.test(val)) return '端口使能掩码';
+	var low = parseInt(val, 16) & 0xff, ports = [];
+	for (var bit = 0; bit < 8; bit++)
+		if (low & (1 << bit)) ports.push('端口 ' + ppePortName(bit));
+	var head = '低 8 位 0x' + ('0' + low.toString(16)).slice(-2);
+	return ports.length ? head + ' → ' + ports.join('、') + ' 使能；高 24 位为保留位' : head + '：无端口使能；高 24 位为保留位';
+}
+
+var PPE_CFG_META = {
+	npu_attached: {label:'NPU 挂载', desc:function(v){ return v === '1' ? '是，NPU 驱动已与硬件转发引擎协同' : '否'; }},
+	gdm2_fwd_cfg: {label:'GDM2 转发配置', desc:function(){ return 'WAN 侧 DMA 转发配置寄存器原值'; }},
+	fe_wan_port: {label:'WAN 口', desc:function(v){ return 'PSE 端口 ' + ppePortName(parseInt(v, 16)) + '，转发引擎认定的 WAN 侧 DMA'; }},
+	fe_vip_port_en: {label:'VIP 端口使能', desc:ppePortMaskDesc},
+	fe_ifc_port_en: {label:'IFC 端口使能', desc:ppePortMaskDesc},
+	ppe0_flow_cfg: {label:'PPE0 流表配置', desc:function(){ return '控制 PPE0 硬件转发的匹配行为'; }},
+	ppe0_table_cfg: {label:'PPE0 表配置', desc:function(){ return 'PPE0 流表基址、容量等布局参数'; }},
+	ppe0_gdm2_default_cpu_port: {label:'PPE0 GDM2 默认 CPU 端口', desc:function(v){ return 'PSE 端口 ' + ppePortName(parseInt(v, 10)) + '，WAN 流未命中硬件转发时交给该 CPU DMA'; }},
+	ppe1_flow_cfg: {label:'PPE1 流表配置', desc:function(){ return '控制 PPE1 硬件转发的匹配行为'; }},
+	ppe1_table_cfg: {label:'PPE1 表配置', desc:function(){ return 'PPE1 流表基址、容量等布局参数'; }},
+	ppe1_gdm2_default_cpu_port: {label:'PPE1 GDM2 默认 CPU 端口', desc:function(v){ return 'PSE 端口 ' + ppePortName(parseInt(v, 10)) + '，WAN 流未命中硬件转发时交给该 CPU DMA'; }}
+};
+
+// 分组顺序即展示顺序；缺字段的分组整块略过。
+var PPE_CFG_GROUPS = [
+	{title:'全局', keys:['npu_attached', 'fe_wan_port', 'fe_vip_port_en', 'fe_ifc_port_en']},
+	{title:'WAN 侧 DMA（GDM2）', keys:['gdm2_fwd_cfg']},
+	{title:'PPE0 硬件转发引擎', keys:['ppe0_flow_cfg', 'ppe0_table_cfg', 'ppe0_gdm2_default_cpu_port'], ppe:'ppe0'},
+	{title:'PPE1 硬件转发引擎', keys:['ppe1_flow_cfg', 'ppe1_table_cfg', 'ppe1_gdm2_default_cpu_port'], ppe:'ppe1'}
+];
+
+function parsePpeConfig(config) {
+	var map = {}, order = [];
+	(config || '').split('\n').forEach(function(line) {
+		line = line.trim();
+		var pos = line.indexOf(':');
+		if (pos < 1) return;
+		var key = line.slice(0, pos).trim(), val = line.slice(pos + 1).trim();
+		if (!key) return;
+		map[key] = val;
+		order.push(key);
+	});
+	return {map:map, order:order};
+}
+
+// bind_rate 形如 "ppe0: l2b=30 l3=30"，表示每类表可绑定的条目上限。
+function parseBindRate(text) {
+	var res = {};
+	(text || '').split('\n').forEach(function(line) {
+		var m = /^\s*([A-Za-z0-9_]+)\s*:\s*(.*)$/.exec(line);
+		if (!m) return;
+		var kv = {};
+		m[2].split(/\s+/).forEach(function(pair) {
+			var p = pair.split('=');
+			if (p.length === 2) kv[p[0]] = p[1];
+		});
+		res[m[1]] = kv;
+	});
+	return res;
+}
+
+function ppeCfgRow(label, val, desc) {
+	return E('tr',{'class':'tr'},[
+		E('td',{'class':'td'}, label),
+		E('td',{'class':'td'}, val),
+		E('td',{'class':'td'}, desc || '')
+	]);
+}
+
+function renderPpeConfigRows(config, bindRateText) {
+	var parsed = parsePpeConfig(config), binds = parseBindRate(bindRateText);
+	var rows = [], used = {};
+	PPE_CFG_GROUPS.forEach(function(group) {
+		var keys = group.keys.filter(function(k) { return parsed.map.hasOwnProperty(k); });
+		if (!keys.length) return;
+		rows.push(E('tr',{'class':'tr ppe-cfg-group'}, E('td',{'class':'td','colspan':3}, group.title)));
+		keys.forEach(function(k) {
+			used[k] = true;
+			var meta = PPE_CFG_META[k] || {label:k};
+			var val = parsed.map[k];
+			rows.push(ppeCfgRow(meta.label, ppeHex(val), meta.desc ? meta.desc(val) : ''));
+		});
+		var b = group.ppe ? binds[group.ppe] : null;
+		if (b) {
+			var vals = [], cap = [];
+			if (b.l2b !== undefined) { vals.push('l2b=' + b.l2b); cap.push('二层桥最多 ' + b.l2b + ' 条'); }
+			if (b.l3 !== undefined) { vals.push('l3=' + b.l3); cap.push('三层路由最多 ' + b.l3 + ' 条'); }
+			if (vals.length) rows.push(ppeCfgRow('绑定上限', vals.join(' / '), cap.join('，')));
+		}
+	});
+	var rest = parsed.order.filter(function(k) { return !used[k]; });
+	if (rest.length) {
+		rows.push(E('tr',{'class':'tr ppe-cfg-group'}, E('td',{'class':'td','colspan':3}, '其他')));
+		rest.forEach(function(k) { rows.push(ppeCfgRow(k, ppeHex(parsed.map[k]), '驱动新增字段，原样显示')); });
+	}
+	return rows;
 }
 
 /* ── PPE Table ── */
@@ -529,6 +634,7 @@ return view.extend({
 		_prevFe = null; // 进入页面重置基准，首帧显示“采样中”，避免沿用上次访问的陈旧计数
 		injectCSS();
 		var st = data[0]||{}, ppe = data[1]||{}, fe = data[2]||{};
+		_ppeCfgKey = (st.ppe_config||'') + '|' + (st.ppe_bind_rate||'');
 		var entries = Array.isArray(ppe.entries) ? ppe.entries : [];
 		var memR = Array.isArray(st.memory_regions) ? st.memory_regions : [];
 		var freqSource = st.cpu_freq_source || 'cpufreq';
@@ -597,9 +703,9 @@ return view.extend({
 					E('div',{'class':'soc-table-wrap'},[
 						E('table',{'class':'table','id':'ppe-config-table'},[
 							E('tr',{'class':'tr cbi-section-table-titles'},[
-								E('th',{'class':'th'},_('寄存器')), E('th',{'class':'th'},_('值'))
+								E('th',{'class':'th'},_('项目')), E('th',{'class':'th'},_('值')), E('th',{'class':'th'},_('说明'))
 							])
-						].concat(renderPpeConfigRows(st.ppe_config)))
+						].concat(renderPpeConfigRows(st.ppe_config, st.ppe_bind_rate)))
 					])
 				])
 			]) : null
@@ -631,6 +737,14 @@ return view.extend({
 
 				var tb=document.getElementById('ppe-entries-table');
 				if(tb){while(tb.rows.length>1)tb.deleteRow(1);renderPpeRows(entries).forEach(function(r){tb.appendChild(r);});}
+
+				// PPE 配置：驱动输出变化时才重建（配置表默认折叠，重建开销可忽略）
+				var cfgKey=(st.ppe_config||'')+'|'+(st.ppe_bind_rate||'');
+				if(cfgKey!==_ppeCfgKey){
+					_ppeCfgKey=cfgKey;
+					var ct=document.getElementById('ppe-config-table');
+					if(ct){while(ct.rows.length>1)ct.deleteRow(1);renderPpeConfigRows(st.ppe_config,st.ppe_bind_rate).forEach(function(r){ct.appendChild(r);});}
+				}
 			},this));
 		},this), 5);
 
